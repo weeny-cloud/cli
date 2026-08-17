@@ -1,0 +1,29 @@
+# Recipe: Docker containers on weeny
+
+Run every command ON THE SERVER — i.e. `npx weeny-cloud ssh "<command>"` (or ssh in first).
+weeny's guest kernel supports Docker fully — normal bridge networking and `-p` port publishing
+work; you do NOT need `--network host` or any iptables tweaks.
+
+1. Install Docker:
+     curl -fsSL https://get.docker.com | sh
+
+2. Supervise a container the weeny way. Run `docker run` in the FOREGROUND (no -d) under
+   `weeny start`, so weeny supervises the container's lifecycle (restarts it if it dies). Publish
+   the port with -p and use --rm so a restart starts clean:
+     mkdir -p /apps/web
+     cd /apps/web && weeny start web -- docker run --rm -p 8080:80 nginx:latest
+
+3. Put it on the internet — expose the published host port:
+     weeny expose web 8080          # → https://web-xxxx.onweeny.com
+   (weeny will note the port is served by an "external process" — that's the container; it's
+   expected, and it exposes fine.)
+
+That's it — the container is live at a public HTTPS URL, supervised, and it (and its image layers)
+persist across a rebuild like everything else on the machine.
+
+Notes:
+- For a container that needs its own data, mount a host dir: `-v /apps/web/data:/data-in-container`.
+  Everything under /apps persists.
+- `docker compose` works too; supervise `docker compose up` (foreground) under `weeny start`, and
+  `weeny expose` whichever published port you want public.
+- Multiple containers: one `weeny start`/`expose` per published port, each its own app + port.

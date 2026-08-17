@@ -1,0 +1,36 @@
+# Recipe: a Next.js (or any build-step) app on weeny
+
+The mainline weeny flow: build locally, push, weeny builds + runs it on the server. Works the
+same for Vite/React/Svelte/Astro — anything with an `npm run build` step.
+
+WHY there's a build step to think about: your source (.tsx) isn't run directly — `next build`
+compiles it into `.next/`, and `next start` serves THAT. So an update means "rebuild on the
+server, then restart", not just restart. weeny handles this for you (below).
+
+--- First deploy ---
+
+  # LAPTOP — build a small app locally, then push it
+  npx create-next-app@latest myapp --ts --app --use-npm
+  npx weeny-cloud push ./myapp
+  #   push ships SOURCE only — it respects .gitignore, so .next/, node_modules, and .env stay
+  #   local (node_modules must be built on the server anyway: Mac-built binaries won't run on Linux).
+
+  # SERVER — install, build, start, expose (push prints these exact next steps the first time):
+  npx weeny-cloud ssh "cd /apps/myapp && npm install && npm run build"
+  npx weeny-cloud ssh "cd /apps/myapp && weeny start myapp -- npm start"
+  #   weeny sees the `build` script in package.json and remembers it.
+  npx weeny-cloud ssh "weeny expose myapp 3000"   # → https://myapp-xxxx.onweeny.com
+
+--- Updating ---
+
+  # edit locally, then just:
+  npx weeny-cloud push ./myapp
+  #   push now automatically: npm install → npm run build → restart. Your change is actually
+  #   live (no stale build). That's it — one command.
+
+Notes:
+- A plain Next app needs nothing about its public URL — TLS is terminated at the edge and it
+  Just Works. Only set env like NEXT_PUBLIC_* if YOUR app actually uses it.
+- Custom build command? `weeny start myapp --build "npm run build:prod" -- npm start`. No build
+  step at all (a plain Node/Express app)? `--build none` — push will just restart it.
+- Right after a (re)start the app takes ~1-2s to be ready; if a health check 502s, retry briefly.

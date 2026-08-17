@@ -1,0 +1,39 @@
+# Recipe: PostgreSQL on weeny
+
+Run every command ON THE SERVER — i.e. `npx weeny-cloud ssh "<command>"` (or ssh in first).
+Postgres is an INTERNAL service: do NOT `weeny expose` it (that would put your database on the
+public internet). Apps on the box reach it at 127.0.0.1:5432.
+
+1. Install, then stop the distro's auto-started service. (apt packages ship their own systemd
+   unit — here `postgresql@16-main` — which grabs :5432 and would fight your weeny app and race
+   it on every boot. Disable + mask it.)
+     apt-get install -y postgresql
+     systemctl disable --now postgresql postgresql@16-main
+     systemctl mask postgresql@16-main
+
+2. Initialize the cluster as the postgres user (its data lives on the persistent disk):
+     mkdir -p /apps/postgres && chown postgres:postgres /apps/postgres
+     sudo -u postgres /usr/lib/postgresql/16/bin/initdb -D /apps/postgres/data --encoding=UTF8 --locale=C.UTF-8
+
+3. weeny apps run as root, but postgres refuses to run as root — wrap it to drop privileges.
+   (Written with printf, not a heredoc, so it pastes cleanly at any indentation.)
+     printf '#!/bin/bash\nexec setpriv --reuid=postgres --regid=postgres --init-groups /usr/lib/postgresql/16/bin/postgres -D /apps/postgres/data\n' > /apps/postgres/run.sh
+     chmod +x /apps/postgres/run.sh
+
+4. Supervise it:
+     cd /apps/postgres && weeny start postgres -- /apps/postgres/run.sh
+
+5. Create a database + an app role for your other apps to connect with:
+     sudo -u postgres psql -c "CREATE DATABASE appdb;"
+     sudo -u postgres psql -c "CREATE ROLE appuser LOGIN PASSWORD 'change-me';"
+     sudo -u postgres psql -d appdb -c "GRANT ALL ON SCHEMA public TO appuser;"
+   Note: fresh clusters trust any connection from 127.0.0.1, so on this single-tenant box the
+   password above isn't actually checked — that's fine, because only YOUR apps share localhost and
+   the DB never listens on the public interface. Set the password anyway (apps pass it, and it's
+   ready if you later switch pg_hba.conf to scram-sha-256). Never `weeny expose` postgres.
+
+Durability: everything above — the apt-installed binaries, the cluster in /apps/postgres/data,
+and the weeny app registration — lives on the machine's one persistent disk, so it all survives
+a rebuild. No special "durable directory" needed.
+
+Manage: journalctl -u weeny-postgres -f · systemctl restart weeny-postgres

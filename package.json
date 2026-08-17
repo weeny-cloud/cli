@@ -1,0 +1,40 @@
+{
+  "name": "weeny-cloud",
+  "version": "0.10.0",
+  "description": "weeny.cloud — a teeny weeny, simple wimple cloud for coding agents",
+  "homepage": "https://weeny.cloud",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/commandable/weeny-cloud.git"
+  },
+  "bugs": {
+    "url": "https://github.com/commandable/weeny-cloud/issues"
+  },
+  "keywords": [
+    "cloud",
+    "deploy",
+    "hosting",
+    "coding-agents",
+    "claude-code",
+    "agent",
+    "ssh",
+    "vps",
+    "paas",
+    "linux"
+  ],
+  "files": [
+    "cli.mjs",
+    "README.md"
+  ],
+  "type": "module",
+  "bin": {
+    "weeny-cloud": "cli.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.21.1"
+  },
+  "license": "UNLICENSED"
+}

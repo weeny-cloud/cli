@@ -1,0 +1,35 @@
+# Recipe: n8n (workflow automation) on weeny
+
+Run every command ON THE SERVER — i.e. `npx weeny-cloud ssh "<command>"` (or ssh in first).
+
+1. Install (large dependency tree — takes a few minutes, be patient):
+     npm install -g n8n
+
+2. Set env BEFORE the first start. The one that matters and isn't obvious: pin the encryption
+   key yourself. n8n auto-generates one on first run; if it's ever lost or regenerated, every
+   stored credential becomes permanently undecryptable. Setting it via `weeny env` (encrypted,
+   survives rebuilds) makes it durable and stops n8n regenerating it.
+       mkdir -p /apps/n8n
+       weeny env n8n \
+         N8N_ENCRYPTION_KEY=$(openssl rand -hex 24) \
+         N8N_USER_FOLDER=/apps/n8n \
+         N8N_PORT=5678 \
+         N8N_PROTOCOL=https \
+         N8N_PROXY_HOPS=1
+
+3. Supervise it, then put it on the internet:
+     cd /apps/n8n && weeny start n8n -- n8n start
+     weeny expose n8n 5678        # → prints https://n8n-xxxx.onweeny.com
+
+4. Feed the now-known URL back in. (weeny terminates TLS at the Cloudflare edge, so n8n receives
+   plain HTTP locally but must be TOLD its real https URL, or the editor + webhooks build wrong
+   links. Setting these auto-restarts the app.)
+     weeny env n8n \
+       N8N_HOST=n8n-xxxx.onweeny.com \
+       N8N_EDITOR_BASE_URL=https://n8n-xxxx.onweeny.com \
+       WEBHOOK_URL=https://n8n-xxxx.onweeny.com
+
+Open the URL and complete owner setup. The n8n install, its data in /apps/n8n, and the encryption
+key all persist across a rebuild.
+
+Manage: journalctl -u weeny-n8n -f · systemctl restart weeny-n8n

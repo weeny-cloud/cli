@@ -1,0 +1,53 @@
+# Recipe: apps on a teeny box (1 GB) — don't build on the server
+
+A teeny box is 1 vCPU / 1 GB RAM (plus swap). It RUNS a couple of small apps happily —
+what it does badly is BUILD: `npm install` of a heavy tree plus `next build`/`vite build`
+swap-crawls for many minutes and can get OOM-killed. So on teeny, either have no build
+step at all, or run the build on the laptop and push the output. Two patterns:
+
+--- Pattern A: no build at all (simplest — use this by default) ---
+
+The default stack works unchanged: one Node/Express server, SQLite built into Node
+(zero deps), a static HTML/CSS/JS frontend in public/, scheduled work in-process.
+Follow https://app.weeny.cloud/recipes/default.txt and skip its Vite option — every
+push is then deps + restart in seconds, and 1 GB never notices.
+
+--- Pattern B: build locally, push the output ---
+
+For a React/Vite (or other bundled) frontend: the build runs on the LAPTOP, the server
+only ever serves the finished files.
+
+  # LAPTOP — build first, so dist/ exists before you push
+  npm run build                        # vite build → dist/
+
+  # dist/ is usually in .gitignore, and push respects .gitignore — so ship it either by
+  # removing `dist` from .gitignore (recommended), or with:
+  npx weeny-cloud push ./myapp --all
+  #   --all ignores .gitignore entirely — including a local .env. Keep secrets in
+  #   `weeny env myapp KEY=value`, never in a pushed .env.
+
+  # SERVER — first time: serve dist/ from your Node server (express.static('dist')) and
+  # tell weeny there is NO server-side build step:
+  cd /apps/myapp && npm install        # server deps only (express etc.) — small, fast
+  weeny start myapp --build none -- node server.mjs
+  #   --build none matters: without it, push sees the "build" script in package.json and
+  #   re-runs it on the box — exactly the thing we're avoiding.
+  weeny expose myapp 3000
+
+  Updates: `npm run build` locally → push → restart in seconds. The build never touches
+  the box.
+
+Next.js on teeny: prefer a static export (`output: 'export'` in next.config, build →
+out/, serve out/ statically per pattern B). A full server-rendered Next app can ship a
+locally-built .next/ the same way (push --all, `--build none`, `npm install` on the box
+is fine — it's `next build` that hurts), but if you're doing much of that, a weeny-tier
+box is the honest fix.
+
+--- Keep a teeny box teeny ---
+
+- SQLite IS the database here — do not run postgres/n8n/docker on 1 GB.
+- One or two apps, not five. `weeny health` shows memory/swap/OOM state; if push/start
+  warns about memory, that's the box, not your code.
+- A server-side build that sneaks in usually still completes (swap) — just slowly. If the
+  loop feels painful, tell the user a bigger plan fixes it: they decide, via
+  app.weeny.cloud/dashboard/billing or `npx weeny-cloud tier` — never change it yourself.

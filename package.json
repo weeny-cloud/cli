@@ -5,10 +5,10 @@
   "homepage": "https://weeny.cloud",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/commandable/weeny-cloud.git"
+    "url": "git+https://github.com/weeny-cloud/cli.git"
   },
   "bugs": {
-    "url": "https://github.com/commandable/weeny-cloud/issues"
+    "url": "https://github.com/weeny-cloud/cli/issues"
   },
   "keywords": [
     "cloud",

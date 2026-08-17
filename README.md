@@ -84,5 +84,5 @@ Apps for humans, tools for agents — the same app, the same permissions, both w
 The `weeny-cloud` CLI (the npm package), the Agent Skill, and the deploy recipes.
 The weeny control plane and server payload are closed-source.
 
-Issues and questions: [github issues](https://github.com/commandable/weeny-cloud/issues)
+Issues and questions: [github issues](https://github.com/weeny-cloud/cli/issues)
 or hello@weeny.cloud.

@@ -26,12 +26,14 @@ only ever serves the finished files.
   #   --all ignores .gitignore entirely — including a local .env. Keep secrets in
   #   `weeny env myapp KEY=value`, never in a pushed .env.
 
-  # SERVER — first time: serve dist/ from your Node server (express.static('dist')) and
-  # tell weeny there is NO server-side build step:
-  cd /apps/myapp && npm install        # server deps only (express etc.) — small, fast
-  weeny start myapp --build none -- node server.mjs
-  #   --build none matters: without it, push sees the "build" script in package.json and
-  #   re-runs it on the box — exactly the thing we're avoiding.
+  # First push: serve dist/ from your Node server (express.static('dist')). The build
+  # command is only what must run ON the box — a plain `npm ci` for server deps, never
+  # the bundler (that already ran on the laptop):
+  npx weeny-cloud push ./myapp myapp --all --build "npm ci" -- node server.mjs
+  #   weeny only ever runs the commands you give it, so the vite build can't sneak onto
+  #   the box. Later pushes reuse the remembered commands: npx weeny-cloud push ./myapp --all
+
+  # SERVER — put it online:
   weeny expose myapp 3000
 
   Updates: `npm run build` locally → push → restart in seconds. The build never touches
@@ -39,9 +41,9 @@ only ever serves the finished files.
 
 Next.js on teeny: prefer a static export (`output: 'export'` in next.config, build →
 out/, serve out/ statically per pattern B). A full server-rendered Next app can ship a
-locally-built .next/ the same way (push --all, `--build none`, `npm install` on the box
-is fine — it's `next build` that hurts), but if you're doing much of that, a weeny-tier
-box is the honest fix.
+locally-built .next/ the same way (push --all with --build "npm ci" — installing deps on
+the box is fine; it's `next build` that hurts), but if you're doing much of that, a
+weeny-tier box is the honest fix.
 
 --- Keep a teeny box teeny ---
 

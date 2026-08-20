@@ -1,36 +1,47 @@
 # Recipe: a Python app (Flask/FastAPI/Django) on weeny
 
-Ubuntu 24.04 with system Python. The whole trick is: don't fight PEP-668 — use a venv, and
-supervise the venv's server binary by ABSOLUTE path. Works the same for a DB-backed app
-(pair it with the postgres recipe).
+Ubuntu 24.04 with system Python. The whole trick is: don't fight PEP-668 — build a venv
+INSIDE the release with your --build command, and start the venv's server by relative
+path. Works the same for a DB-backed app (pair it with the postgres recipe).
 
 --- Deploy ---
 
-  # LAPTOP — build/prepare locally, then push source (respects .gitignore; venv + __pycache__ stay local)
-  npx weeny-cloud push ./myapp
+  # LAPTOP — one command; weeny remembers it for every later push
+  npx weeny-cloud push ./myapp myapp \
+    --build "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt" \
+    -- .venv/bin/gunicorn -b 127.0.0.1:8000 -w 2 app:app
+  #   FastAPI instead: -- .venv/bin/uvicorn --host 127.0.0.1 --port 8000 app:app
 
   # SERVER — npx weeny-cloud ssh, then:
-  cd /apps/myapp
-  python3 -m venv venv                       # REQUIRED: system pip is externally-managed (PEP-668);
-                                             #   plain `pip3 install` errors. A venv is the clean fix.
-  ./venv/bin/pip install -r requirements.txt  # include a production server: gunicorn (WSGI) or uvicorn (ASGI)
-
-  # Supervise the venv's server by ABSOLUTE path (weeny doesn't "activate" the venv for you):
-  weeny start myapp -- /apps/myapp/venv/bin/gunicorn -b 127.0.0.1:8000 -w 2 app:app
-  #   FastAPI instead: -- /apps/myapp/venv/bin/uvicorn --host 127.0.0.1 --port 8000 app:app
   weeny expose myapp 8000                     # → https://myapp-xxxx.onweeny.com
+
+Why the venv lives inside the release: venv scripts bake absolute paths into their
+shebangs, and weeny builds each release at its final path — so the venv is always
+self-consistent, and a rollback brings back the exact interpreter + packages that release
+was built with. The relative `.venv/bin/...` start command works because the app always
+runs with the live release as its working directory.
+
+(Server-side instead of push? Same thing:
+  weeny deploy myapp --from /root/myapp \
+    --build "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt" \
+    -- .venv/bin/gunicorn -b 127.0.0.1:8000 -w 2 app:app )
 
 --- Updating ---
 
   # edit locally, then:
   npx weeny-cloud push ./myapp
-  #   push reinstalls deps and restarts. (A Python app usually has no build step — that's fine.)
+  #   every push builds a fresh venv from requirements.txt inside the new release — deps
+  #   can never be stale, and a change to requirements.txt needs no extra step. The new
+  #   release only goes live if the install and health check succeed.
 
 Notes:
 - requirements.txt must pin a server (gunicorn/uvicorn) and any driver (psycopg2-binary for
-  postgres). node_modules-style native wheels build fine on the server.
+  postgres). Native wheels build fine on the server. `python3 -m venv` is REQUIRED: system
+  pip is externally-managed (PEP-668) and plain `pip3 install` errors.
 - Bind to 127.0.0.1 only — `weeny expose` puts it on public HTTPS (TLS terminated at the edge;
   your app sees plain HTTP). Never bind 0.0.0.0 for a service you don't want public.
+- Durable data (SQLite files, uploads) goes in $WEENY_DATA_DIR (/data/apps/myapp) — never
+  beside the code: every deploy is a fresh copy and rollback swaps code backward.
 - Secrets/config → `weeny env myapp KEY=value` (encrypted, survives rebuilds, restarts the app).
   Read them with os.environ.
 - Talking to Postgres on the same box? Connect to 127.0.0.1:5432, and open a FRESH connection

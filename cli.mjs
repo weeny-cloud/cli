@@ -128,6 +128,20 @@ async function registerDeviceKey() {
   return keyPath
 }
 
+// Optional provenance for a push: what commit is being deployed. Never a dependency —
+// no repo, detached head, missing git all yield null; a dirty tree deploys and says so.
+function collectGitMetaLocal(dir) {
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim()
+  try {
+    return {
+      sha: git('rev-parse', '--short', 'HEAD'),
+      subject: git('log', '-1', '--format=%s'),
+      branch: git('rev-parse', '--abbrev-ref', 'HEAD'),
+      dirty: git('status', '--porcelain').length > 0,
+    }
+  } catch { return null }
+}
+
 // Resolve a machine to the ssh target the shell should use: writes/refreshes its config
 // block and returns { host: 'root@<alias>' } — works for both direct and tunnel machines.
 const sshTarget = async (m) => {
@@ -174,7 +188,7 @@ function commandList() {
   console.log(`
   npx weeny-cloud login            sign in — weeny emails you a code
   npx weeny-cloud create           get your server (~2 min)
-  npx weeny-cloud push [folder]    send this folder to your server (re-push = update)
+  npx weeny-cloud push [folder]    deploy this folder to your server (re-push = new release)
   npx weeny-cloud ssh [command]    go to the server — that's where the power is
   npx weeny-cloud token <host>     bearer token to call a private app from a terminal/agent
   npx weeny-cloud keys             this account's device keys (list, --revoke, --register)
@@ -241,9 +255,11 @@ const commands = {
   ${wayIn}
 
 To put an app on it:
-  1. build it locally, then:   npx weeny-cloud push ./myapp
-  2. start it on the server:   npx weeny-cloud ssh "cd /apps/myapp && weeny start myapp -- <start-command>"
-  3. put it on the internet:   npx weeny-cloud ssh "weeny expose myapp <port>"   → https://myapp-xxxx.onweeny.com
+  1. build it locally, then deploy it:   npx weeny-cloud push ./myapp -- <start command>
+  2. put it on the internet:             npx weeny-cloud ssh "weeny expose myapp <port>"   → https://myapp-xxxx.onweeny.com
+
+A push is a deployment: it uploads, builds (pass --build "<cmd>" if the app needs one),
+health-checks and goes live — or the previous release keeps serving.
 
 Apps are operated ON the server with \`weeny\` — bare \`weeny\` there explains itself.
 Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud skill
@@ -254,44 +270,95 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     }
   },
 
-  // Ship a local directory to the server: the build-locally → push → live loop.
+  // Ship a local directory to the server as a new RELEASE: upload into a fresh staging
+  // area, then the box builds, health-checks and activates it — or keeps the old release
+  // serving. Push never mutates anything until the whole transaction succeeds.
   async push() {
-    const dir = resolve(positionals[0] ?? '.')
-    const app = positionals[1] ?? basename(dir).toLowerCase()
+    // push needs its own parser: values with spaces (--build "npm ci && npm run build")
+    // and a `-- <start command>` tail are beyond the crude module-level flag scan.
+    const argvAll = process.argv.slice(3)
+    const dd = argvAll.indexOf('--')
+    const head = dd >= 0 ? argvAll.slice(0, dd) : argvAll
+    const startArgv = dd >= 0 ? argvAll.slice(dd + 1) : []
+    const f = {}, pos = []
+    const VALUED = new Set(['build', 'health', 'tag'])
+    for (let i = 0; i < head.length; i++) {
+      if (head[i].startsWith('--')) {
+        const k = head[i].slice(2)
+        if (VALUED.has(k)) {
+          const v = head[i + 1]
+          if (v === undefined || v.startsWith('--')) die(`--${k} needs a value in quotes`)
+          f[k] = v; i++
+        } else f[k] = true   // boolean flags: --all
+      } else pos.push(head[i])
+    }
+    if ('no-restart' in f) die(`--no-restart is gone: push now deploys atomically — there is no upload-without-deploy`)
+
+    const dir = resolve(pos[0] ?? '.')
+    const app = pos[1] ?? basename(dir).toLowerCase()
     try { if (!statSync(dir).isDirectory()) die(`not a directory: ${dir}`) } catch { die(`no such directory: ${dir}`) }
-    if (!/^[a-z0-9][a-z0-9-]*$/.test(app) || app.length > 40) die(`app name '${app}' must be lowercase letters, digits, hyphens (max 40) — pass one: npx weeny-cloud push ${positionals[0] ?? '.'} <name>`)
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(app) || app.length > 40) die(`app name '${app}' must be lowercase letters, digits, hyphens (max 40) — pass one: npx weeny-cloud push ${pos[0] ?? '.'} <name>`)
 
     const m = await runningMachine()
     const { host } = await sshTarget(m)   // writes/refreshes the ssh-config block (direct or tunnel)
 
+    // Step 1: the box creates a unique empty staging dir for THIS push and tells us what
+    // it already knows (current release, remembered commands) — so a doomed first push
+    // fails here, before a single byte is uploaded.
+    let begin
+    try {
+      const out = execFileSync('ssh', [host, `weeny _deploy-begin ${app}`], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'] })
+      begin = JSON.parse(out.trim().split('\n').pop())
+    } catch {
+      die(`this server doesn't speak the push protocol — update it (ssh in and re-run the installer), or deploy on the server: weeny deploy ${app} --from <dir> -- <command>`)
+    }
+    if (!begin.defaults?.start?.length && !startArgv.length)
+      die(`first push of '${app}' needs a start command — end the line with: -- <command> [args…]\n  e.g. npx weeny-cloud push ${pos[0] ?? '.'} ${app} -- npm start`)
+
     // Ship SOURCE only. Always skip node_modules (must be built on the Linux server — Mac-built
     // native binaries won't run there) and .git. Also respect .gitignore (build outputs like
     // .next/dist, caches, .env) unless --all. We print what we skip — never silent.
-    const all = 'all' in flags
-    const hasGitignore = existsSync(join(dir, '.gitignore'))
-    const useGitignore = !all && hasGitignore
-    console.log(`→ pushing ${dir} → /apps/${app}/ on ${m.name}`)
-    console.log(`  · never shipped: node_modules, .git (deps install on the server)`)
+    const all = 'all' in f
+    const useGitignore = !all && existsSync(join(dir, '.gitignore'))
+    console.log(`→ pushing ${dir} → a new release of '${app}' on ${m.name}`)
+    console.log(`  · never shipped: node_modules, .git (deps install on the server, inside the release)`)
     if (useGitignore) console.log(`  · respecting .gitignore (build output, caches, .env stay local) — pass --all to override`)
     if (useGitignore && existsSync(join(dir, '.env'))) {
       try { if (/^\s*\.env/m.test(readFileSync(join(dir, '.gitignore'), 'utf8')))
         console.log(`  · note: .env is gitignored → not shipped. Set secrets with 'weeny env ${app} KEY=value' (or --all to include it).`) } catch {}
     }
-    const filters = ['--exclude', '.git', '--exclude', 'node_modules', ...(useGitignore ? ['--filter', ':- .gitignore'] : [])]
-    try {
-      execFileSync('rsync', ['-az', ...filters, '-e', 'ssh', `${dir}/`, `${host}:/apps/${app}/`], { stdio: 'inherit' })
-    } catch {
-      // no rsync — tar over ssh (host is a single bare alias token, safe to interpolate)
-      const tarExcl = `--exclude .git --exclude node_modules${useGitignore ? ` --exclude-from=${JSON.stringify(join(dir, '.gitignore'))}` : ''}`
-      execSync(`tar -C ${JSON.stringify(dir)} ${tarExcl} -czf - . | ssh ${host} 'mkdir -p /apps/${app} && tar -xzf - -C /apps/${app}'`, { stdio: 'inherit' })
-    }
-    console.log(`✓ pushed`)
+    if (begin.defaults?.start?.length && !startArgv.length) console.log(`  · reusing remembered commands${begin.defaults.build ? ` (build: ${begin.defaults.build})` : ''}`)
 
-    if (!('no-restart' in flags)) {
-      // The box installs deps + rebuilds (if the app has a build step) + restarts, and reports
-      // honestly — a restart alone doesn't rebuild a framework app.
-      try { execFileSync('ssh', [host, `weeny _sync ${app}`], { stdio: 'inherit' }) }
-      catch (e) { process.exit(e.status ?? 1) }
+    // Step 2: upload into the empty staging dir. No --delete needed — the destination is
+    // pristine, so this push can't inherit stale files OR delete anything server-side.
+    // --copy-dest sources unchanged files from the live release as server-local COPIES
+    // (new inodes, so releases stay independent) — rsync's delta without the hardlinks.
+    const filters = ['--exclude', '.git', '--exclude', 'node_modules', ...(useGitignore ? ['--filter', ':- .gitignore'] : [])]
+    const copyDest = begin.baseReleaseId ? ['--copy-dest', `/apps/${app}/current`] : []
+    try {
+      execFileSync('rsync', ['-az', ...filters, ...copyDest, '-e', 'ssh', `${dir}/`, `${host}:${begin.incomingDir}/`], { stdio: 'inherit' })
+    } catch {
+      // no rsync — tar over ssh into the same staging dir (host + incomingDir are safe
+      // server-generated tokens). Same empty-destination semantics; no delta.
+      const tarExcl = `--exclude .git --exclude node_modules${useGitignore ? ` --exclude-from=${JSON.stringify(join(dir, '.gitignore'))}` : ''}`
+      execSync(`tar -C ${JSON.stringify(dir)} ${tarExcl} -czf - . | ssh ${host} 'tar -xzf - -C ${begin.incomingDir}'`, { stdio: 'inherit' })
+    }
+    console.log(`✓ uploaded`)
+
+    // Step 3: finalize — the box runs the whole transaction (build → health gate →
+    // activate, or restore the previous release) and streams it back here.
+    const shq = (v) => `'` + String(v).replace(/'/g, `'\\''`) + `'`
+    const git = collectGitMetaLocal(dir)
+    const parts = ['weeny', '_deploy-finalize', app, '--id', begin.deploymentId]
+    if ('build' in f) parts.push('--build', shq(f.build))
+    if ('health' in f) parts.push('--health', shq(f.health))
+    if ('tag' in f) parts.push('--tag', shq(f.tag))
+    if (git) parts.push('--git-b64', Buffer.from(JSON.stringify(git)).toString('base64'))
+    if (startArgv.length) parts.push('--', ...startArgv.map(shq))
+    try { execFileSync('ssh', [host, parts.join(' ')], { stdio: 'inherit' }) }
+    catch (e) {
+      if (e.status === 3) console.error(`  retry: npx weeny-cloud push ${pos[0] ?? '.'} ${app}`)
+      process.exit(e.status ?? 1)
     }
   },
 
@@ -417,11 +484,17 @@ Signed out? Delete ~/.weeny/credentials.json.`,
 Provision your server (~2 min): a real Linux box — root, SSH, systemd. Uses your SSH
 key (generates ~/.ssh/weeny_ed25519 if you have none) and starts the 7-day free trial.
 One server per account for now. Delete/suspend/rebuild live in the dashboard.`,
-  push: `npx weeny-cloud push [folder] [app-name] [--no-restart]
+  push: `npx weeny-cloud push [folder] [app-name] [--build "<cmd>"] [--health "<cmd>"] [--tag "<text>"] [--all] [-- <start command>]
 
-Send a local folder to /apps/<app-name> on your server (name defaults to the folder's).
-Skips .git and node_modules — run npm install on the server. Re-push after every local
-edit: it restarts the app so changes go live.`,
+Deploy a local folder to your server as a new release (name defaults to the folder's).
+First push needs the start command: end the line with \`-- <command>\`; a build step is
+your call too (\`--build "npm ci && npm run build"\`). After that, bare
+\`npx weeny-cloud push ./myapp\` re-deploys with the remembered commands.
+
+Each push uploads into a fresh staging area (delta transfer against the live release),
+builds INSIDE the new release, health-checks it, and only then switches over — a failed
+build or a failing app leaves the previous release serving. Skips .git and node_modules;
+respects .gitignore (--all to override). Rollback: weeny rollback <app> on the server.`,
   ssh: `npx weeny-cloud ssh [command]
 
 Open a shell on your server — or run one command and return. Uses the right key and IP
@@ -453,9 +526,9 @@ server is tight on memory (\`weeny health\` on the box), tell them and point the
 }
 
 const cmd = process.argv[2]
-const SERVER_WORDS = new Set(['start', 'expose', 'unexpose', 'remove', 'env', 'domain', 'allow', 'revoke', 'health'])
-const OLD_TO_NEW = { run: 'start', rm: 'remove', list: '', ls: '', access: 'allow', guide: 'help' }
-const LINUX_HINT = { logs: 'journalctl -u weeny-APP -f', stop: 'systemctl stop weeny-APP', restart: 'systemctl restart weeny-APP' }
+const SERVER_WORDS = new Set(['deploy', 'start', 'stop', 'restart', 'releases', 'rollback', 'deployments', 'inspect', 'expose', 'unexpose', 'remove', 'env', 'domain', 'allow', 'revoke', 'health'])
+const OLD_TO_NEW = { run: 'deploy', rm: 'remove', list: '', ls: '', access: 'allow', guide: 'help' }
+const LINUX_HINT = { logs: 'journalctl -u weeny-APP -f' }
 const ALIASES = { status: 'help', whoami: 'help' } // old names → orientation
 
 if (!cmd) await orient()

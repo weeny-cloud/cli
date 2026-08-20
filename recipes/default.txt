@@ -3,7 +3,7 @@
 Use this unless the app clearly needs something heavier. One Node/Express process, SQLite
 built into Node 22 (zero deps, no database server to run), scheduled work inside the same
 process, and whatever frontend fits — plain static files or a bundled (Vite/React) build:
-a weeny box builds comfortably, and push re-runs the build automatically.
+a weeny box builds comfortably, and every push rebuilds inside the new release.
 
 When NOT to use this — pick by app, not habit:
 - A full framework app (Next.js etc.) → https://app.weeny.cloud/recipes/nextjs.txt —
@@ -17,21 +17,23 @@ When NOT to use this — pick by app, not habit:
 --- Layout (build this locally) ---
 
   myapp/
-    package.json        # {"type":"module"}, deps: express — and NO "build" script (that's the point)
+    package.json        # {"type":"module"}, deps: express — no build script needed
     server.mjs
     public/             # index.html, style.css, app.js — served as-is, no bundler
-    .gitignore          # one line: data/
-                        #   IMPORTANT: the DB lives in data/ ON THE SERVER. push respects
-                        #   .gitignore, so a re-push can never overwrite live data.
 
 --- server.mjs (the whole pattern) ---
 
   import express from 'express'
   import { DatabaseSync } from 'node:sqlite'   // built into Node 22+ — not an npm package
   import { mkdirSync } from 'node:fs'
+  import { join } from 'node:path'
 
-  mkdirSync('data', { recursive: true })
-  const db = new DatabaseSync('data/app.db')
+  // THE data rule: the DB lives in $WEENY_DATA_DIR (/data/apps/myapp), never beside the
+  // code. Every deploy is a fresh copy of your code and rollback swaps code backward —
+  // data here is untouched by both. (The fallback keeps local dev working.)
+  const dataDir = process.env.WEENY_DATA_DIR ?? 'data'
+  mkdirSync(dataDir, { recursive: true })
+  const db = new DatabaseSync(join(dataDir, 'app.db'))
   db.exec('PRAGMA journal_mode = WAL')         // lets a worker/CLI read while the app writes
   db.exec(`CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY, text TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`)
@@ -62,39 +64,38 @@ the same API shape, but the built-in means zero native deps.)
 --- Frontend: pick what fits ---
 
 - Simple UI (forms, dashboards, small tools): plain HTML/CSS/JS in public/, calling your
-  /api routes with fetch. Zero build → every push is live in seconds. For multi-file JS
-  use <script type="module">; vendor any library file into public/ rather than hot-linking
-  CDNs.
+  /api routes with fetch. No build command needed → every push is live in seconds. For
+  multi-file JS use <script type="module">; vendor any library file into public/ rather
+  than hot-linking CDNs.
 - Rich UI (React, component libraries, Tailwind): put a Vite app in ui/, serve its output
-  from the same server — `app.use(express.static('ui/dist'))` — and give package.json a
-  build script: "build": "cd ui && npm install && npm run build". push sees the build
-  script and re-runs it on the server automatically, so updates are never stale. A weeny
-  box handles a Vite build in well under a minute.
+  from the same server — `app.use(express.static('ui/dist'))` — and make the build command
+  `npm ci && cd ui && npm ci && npm run build`. Every push re-runs it inside the new
+  release, so updates are never stale. A weeny box handles a Vite build in well under a minute.
 - Full framework (Next.js and friends): use /recipes/nextjs.txt instead of this layout —
   but keep the node:sqlite pattern above for its data.
 
 --- Deploy ---
 
-  # LAPTOP
-  npx weeny-cloud push ./myapp
+  # LAPTOP — first push carries the commands; weeny remembers them
+  npx weeny-cloud push ./myapp myapp --build "npm ci" -- node server.mjs
+  #   (added a ui/ build? --build "npm ci && cd ui && npm ci && npm run build")
 
-  # SERVER (npx weeny-cloud ssh) — first time only:
-  cd /apps/myapp && npm install
-  weeny start myapp -- node server.mjs
+  # SERVER (npx weeny-cloud ssh) — put it online:
   weeny expose myapp 3000            # → https://myapp-xxxx.onweeny.com
 
-Updates: edit locally → `npx weeny-cloud push ./myapp` → push installs deps, re-runs the
-build script if you added one, and restarts — live in seconds. The DB in /apps/myapp/data/
-persists across pushes, restarts, and rebuilds — it lives on the server's persistent disk
-and is backed up like everything else.
+Updates: edit locally → `npx weeny-cloud push ./myapp` → a fresh release is built with the
+remembered commands and goes live only if the build and health check succeed; otherwise the
+previous version keeps serving. Your DB in /data/apps/myapp persists across deploys,
+rollbacks, restarts, and rebuilds — and is backed up like everything else.
 
 --- Scheduled / background work ---
 
 - Simple cadence ("every N minutes"): setInterval in server.mjs, as above.
-- Clock-aligned ("daily at 09:00"): `npm install node-cron`, same in-process pattern.
-- Heavy jobs that shouldn't share the web process: a second supervised app —
-    weeny start myapp-worker -- node worker.mjs     # no expose — workers get no URL
-  The worker can open data/app.db too — that's what WAL mode is for.
+- Clock-aligned ("daily at 09:00"): add node-cron to package.json, same in-process pattern.
+- Heavy jobs that shouldn't share the web process: a second deployed app from the same folder —
+    npx weeny-cloud push ./myapp myapp-worker --build "npm ci" -- node worker.mjs   # no expose
+  The worker can open the same $WEENY_DATA_DIR/app.db too — that's what WAL mode is for
+  (its WEENY_DATA_DIR differs per app, so point the worker at /data/apps/myapp explicitly).
 - Don't use crontab: cron jobs are unsupervised, invisible in the dashboard, and their logs
-  go nowhere useful. In-process (or `weeny start`) jobs all land in
+  go nowhere useful. In-process (or deployed-worker) jobs all land in
   `journalctl -u weeny-myapp -f`.

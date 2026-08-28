@@ -9,7 +9,7 @@ step at all, or run the build on the laptop and push the output. Two patterns:
 
 The default stack works unchanged: one Node/Express server, SQLite built into Node
 (zero deps), a static HTML/CSS/JS frontend in public/, scheduled work in-process.
-Follow https://app.weeny.cloud/recipes/default.txt and skip its Vite option — every
+Follow https://weeny.cloud/recipes/default.txt and skip its Vite option — every
 push is then deps + restart in seconds, and 1 GB never notices.
 
 --- Pattern B: build locally, push the output ---
@@ -52,4 +52,4 @@ weeny-tier box is the honest fix.
   warns about memory, that's the box, not your code.
 - A server-side build that sneaks in usually still completes (swap) — just slowly. If the
   loop feels painful, tell the user a bigger plan fixes it: they decide, via
-  app.weeny.cloud/dashboard/billing or `npx weeny-cloud tier` — never change it yourself.
+  weeny.cloud/dashboard/billing or `npx weeny-cloud tier` — never change it yourself.

@@ -46,4 +46,4 @@ Notes:
   Read them with os.environ.
 - Talking to Postgres on the same box? Connect to 127.0.0.1:5432, and open a FRESH connection
   per request (don't cache one global connection — it won't survive a Postgres restart). See
-  https://app.weeny.cloud/recipes/postgres.txt
+  https://weeny.cloud/recipes/postgres.txt

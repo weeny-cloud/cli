@@ -58,9 +58,9 @@ it). Code elsewhere? Pass `--from <dir>` — your workspace is yours; weeny copi
 it at deploy and never writes to it.
 
 Starting an app from scratch? Use the default stack — Node + SQLite (built in, zero
-deps), any frontend: `curl https://app.weeny.cloud/recipes/default.txt`. Framework app?
-`curl https://app.weeny.cloud/recipes/nextjs.txt`. On a teeny (1 GB) box don't build
-server-side — `curl https://app.weeny.cloud/recipes/teeny.txt`.
+deps), any frontend: `curl https://weeny.cloud/recipes/default.txt`. Framework app?
+`curl https://weeny.cloud/recipes/nextjs.txt`. On a teeny (1 GB) box don't build
+server-side — `curl https://weeny.cloud/recipes/teeny.txt`.
 
 **3. Put it on the internet** (on the server — `npx weeny-cloud ssh` gets you there).
 Before the first expose, write an `llms.txt` in the app root — a short markdown
@@ -144,10 +144,10 @@ DNS provider. Bare `weeny domain myapp` checks progress; `--remove` detaches.
 - If push output warns the box is running out of memory (or an app gets OOM-killed),
   that's a memory problem, not a code problem — `weeny health` has the detail. A bigger
   plan changes what your user pays, so **tell them and let them decide**
-  (app.weeny.cloud/dashboard/billing, or they run `npx weeny-cloud tier`). Never change
+  (weeny.cloud/dashboard/billing, or they run `npx weeny-cloud tier`). Never change
   the plan yourself.
 - To delete, suspend, or rebuild the server itself, use the dashboard at
-  https://app.weeny.cloud — there is no CLI teardown.
+  https://weeny.cloud — there is no CLI teardown.
 
 ## Stateful services (databases, n8n, …)
 
@@ -159,10 +159,10 @@ packages **auto-start a conflicting systemd unit** (disable + mask it), TLS is t
 at the edge (your app gets HTTP but is public HTTPS — tell it its real URL, known only
 after `expose`), and "lose-it-and-you're-done" secrets belong in `weeny env` (survives
 rebuilds). Don't guess — fetch the worked recipe:
-`curl https://app.weeny.cloud/recipes/postgres.txt` (or `/python.txt`, `/n8n.txt`).
+`curl https://weeny.cloud/recipes/postgres.txt` (or `/python.txt`, `/n8n.txt`).
 Python: build the venv inside the release with `--build` — see `/recipes/python.txt`.
 **Docker** works fully (bridge networking + `-p`) — supervise `docker run` (foreground)
-as a deployed app, then `weeny expose` the port: `curl https://app.weeny.cloud/recipes/docker.txt`.
+as a deployed app, then `weeny expose` the port: `curl https://weeny.cloud/recipes/docker.txt`.
 Host services (RabbitMQ, Postgres via apt) are normal Linux — they live outside the app
 release lifecycle, and rollback never touches them.
 
@@ -182,4 +182,4 @@ reads it, never writes it (backed up; deploy's default `--from`) · `$WEENY_DATA
 `/data/<app>` your app's data (never rolled back) · `/apps/<app>/current` the release
 running now (a symlink — `readlink` shows which; weeny's machinery, rebuilt by deploys).
 
-Full reference: https://app.weeny.cloud/llms-full.txt
+Full reference: https://weeny.cloud/llms-full.txt

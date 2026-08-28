@@ -36,7 +36,7 @@ Everything else is bare Linux — you have root. Apps are systemd units named
 ## Coding agent?
 
 `npx weeny-cloud skill` teaches Claude Code the whole flow.
-Docs for agents: https://app.weeny.cloud/llms.txt
+Docs for agents: https://weeny.cloud/llms.txt
 
 ## Pricing
 

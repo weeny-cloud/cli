@@ -6,7 +6,7 @@ process, and whatever frontend fits — plain static files or a bundled (Vite/Re
 a weeny box builds comfortably, and every push rebuilds inside the new release.
 
 When NOT to use this — pick by app, not habit:
-- A full framework app (Next.js etc.) → https://app.weeny.cloud/recipes/nextjs.txt —
+- A full framework app (Next.js etc.) → https://weeny.cloud/recipes/nextjs.txt —
   and pair it with node:sqlite exactly as below; the database advice here still applies.
 - Software that truly requires Postgres (an off-the-shelf service that demands it, several
   apps sharing one DB) → /recipes/postgres.txt. A typical weeny app does NOT need

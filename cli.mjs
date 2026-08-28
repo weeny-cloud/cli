@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 
 const SELF = fileURLToPath(import.meta.url)   // absolute path to this cli.mjs (for ProxyCommand)
 
-const API = process.env.WEENY_API || 'https://app.weeny.cloud'
+const API = process.env.WEENY_API || 'https://weeny.cloud'
 const DIR = join(homedir(), '.weeny')
 const CREDS = join(DIR, 'credentials.json')
 
@@ -440,7 +440,7 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     if (!target) die(`no '${want}' plan — the plans: ${bs.tiers.map(t => t.name).join(', ')}`)
     if (want === bs.tier) return console.log(`you're already on ${want}`)
     if (!process.stdin.isTTY)
-      die(`changing plan changes what your human pays — this one's theirs. Ask them to run:\n  npx weeny-cloud tier ${want}\nor upgrade in the browser: app.weeny.cloud/dashboard/billing`)
+      die(`changing plan changes what your human pays — this one's theirs. Ask them to run:\n  npx weeny-cloud tier ${want}\nor upgrade in the browser: weeny.cloud/dashboard/billing`)
     console.log(`${bs.tier} → ${want}: ${target.vcpu} vcpu · ${target.memGb}gb at ${price(target)}, prorated from today.`)
     console.log(`your server reboots into its new size (~a minute; apps come back automatically).`)
     const yn = await ask('sound good? (yes/no): ')
@@ -489,7 +489,7 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
   async skill() {
     const dir = join(homedir(), '.claude', 'skills', 'weeny')
     mkdirSync(dir, { recursive: true })
-    const res = await fetch('https://app.weeny.cloud/weeny-skill.md')
+    const res = await fetch('https://weeny.cloud/weeny-skill.md')
     if (!res.ok) die('could not fetch the skill')
     writeFileSync(join(dir, 'SKILL.md'), await res.text())
     console.log(`✓ installed the weeny skill → ${dir}/SKILL.md

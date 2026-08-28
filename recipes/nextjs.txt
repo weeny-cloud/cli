@@ -31,7 +31,7 @@ Notes:
   Just Works. Only set env like NEXT_PUBLIC_* if YOUR app actually uses it.
 - Different build command later? Pass it once — `npx weeny-cloud push ./myapp --build "npm run build:prod"`
   — and it becomes the new remembered command. No build step at all? Just never pass --build.
-- Durable data (SQLite, uploads) goes in $WEENY_DATA_DIR (/data/apps/myapp) — every deploy is
+- Durable data (SQLite, uploads) goes in $WEENY_DATA_DIR (/data/myapp) — every deploy is
   a fresh copy of your code, so anything stored beside the code is replaced with it. See
   /recipes/default.txt for the node:sqlite pattern.
 - Right after a deploy the app takes ~1-2s to be ready; if a health check 502s, retry briefly.

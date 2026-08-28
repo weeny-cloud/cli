@@ -22,7 +22,7 @@ was built with. The relative `.venv/bin/...` start command works because the app
 runs with the live release as its working directory.
 
 (Server-side instead of push? Same thing:
-  weeny deploy myapp --from /root/myapp \
+  weeny deploy myapp \
     --build "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt" \
     -- .venv/bin/gunicorn -b 127.0.0.1:8000 -w 2 app:app )
 
@@ -40,7 +40,7 @@ Notes:
   pip is externally-managed (PEP-668) and plain `pip3 install` errors.
 - Bind to 127.0.0.1 only — `weeny expose` puts it on public HTTPS (TLS terminated at the edge;
   your app sees plain HTTP). Never bind 0.0.0.0 for a service you don't want public.
-- Durable data (SQLite files, uploads) goes in $WEENY_DATA_DIR (/data/apps/myapp) — never
+- Durable data (SQLite files, uploads) goes in $WEENY_DATA_DIR (/data/myapp) — never
   beside the code: every deploy is a fresh copy and rollback swaps code backward.
 - Secrets/config → `weeny env myapp KEY=value` (encrypted, survives rebuilds, restarts the app).
   Read them with os.environ.

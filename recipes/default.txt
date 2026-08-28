@@ -28,7 +28,7 @@ When NOT to use this — pick by app, not habit:
   import { mkdirSync } from 'node:fs'
   import { join } from 'node:path'
 
-  // THE data rule: the DB lives in $WEENY_DATA_DIR (/data/apps/myapp), never beside the
+  // THE data rule: the DB lives in $WEENY_DATA_DIR (/data/myapp), never beside the
   // code. Every deploy is a fresh copy of your code and rollback swaps code backward —
   // data here is untouched by both. (The fallback keeps local dev working.)
   const dataDir = process.env.WEENY_DATA_DIR ?? 'data'
@@ -85,7 +85,7 @@ the same API shape, but the built-in means zero native deps.)
 
 Updates: edit locally → `npx weeny-cloud push ./myapp` → a fresh release is built with the
 remembered commands and goes live only if the build and health check succeed; otherwise the
-previous version keeps serving. Your DB in /data/apps/myapp persists across deploys,
+previous version keeps serving. Your DB in /data/myapp persists across deploys,
 rollbacks, restarts, and rebuilds — and is backed up like everything else.
 
 --- Scheduled / background work ---
@@ -95,7 +95,7 @@ rollbacks, restarts, and rebuilds — and is backed up like everything else.
 - Heavy jobs that shouldn't share the web process: a second deployed app from the same folder —
     npx weeny-cloud push ./myapp myapp-worker --build "npm ci" -- node worker.mjs   # no expose
   The worker can open the same $WEENY_DATA_DIR/app.db too — that's what WAL mode is for
-  (its WEENY_DATA_DIR differs per app, so point the worker at /data/apps/myapp explicitly).
+  (its WEENY_DATA_DIR differs per app, so point the worker at /data/myapp explicitly).
 - Don't use crontab: cron jobs are unsupervised, invisible in the dashboard, and their logs
   go nowhere useful. In-process (or deployed-worker) jobs all land in
   `journalctl -u weeny-myapp -f`.

@@ -11,20 +11,20 @@ public internet). Apps on the box reach it at 127.0.0.1:5432.
      systemctl disable --now postgresql postgresql@16-main
      systemctl mask postgresql@16-main
 
-2. Initialize the cluster as the postgres user. It goes in /data/apps/postgres, NOT in
+2. Initialize the cluster as the postgres user. It goes in /data/postgres, NOT in
    /apps — a database inside the app folder would be rolled back along with the code:
-     mkdir -p /data/apps/postgres && chown postgres:postgres /data/apps/postgres
-     sudo -u postgres /usr/lib/postgresql/16/bin/initdb -D /data/apps/postgres/data --encoding=UTF8 --locale=C.UTF-8
+     mkdir -p /data/postgres && chown postgres:postgres /data/postgres
+     sudo -u postgres /usr/lib/postgresql/16/bin/initdb -D /data/postgres/data --encoding=UTF8 --locale=C.UTF-8
 
 3. weeny apps run as root, but postgres refuses to run as root — wrap it to drop privileges.
    The wrapper lives in a small workspace dir; weeny copies it into each release at deploy.
    (Written with printf, not a heredoc, so it pastes cleanly at any indentation.)
-     mkdir -p /root/postgres-app
-     printf '#!/bin/bash\nexec setpriv --reuid=postgres --regid=postgres --init-groups /usr/lib/postgresql/16/bin/postgres -D /data/apps/postgres/data\n' > /root/postgres-app/run.sh
-     chmod +x /root/postgres-app/run.sh
+     mkdir -p /workspace/postgres
+     printf '#!/bin/bash\nexec setpriv --reuid=postgres --regid=postgres --init-groups /usr/lib/postgresql/16/bin/postgres -D /data/postgres/data\n' > /workspace/postgres/run.sh
+     chmod +x /workspace/postgres/run.sh
 
 4. Deploy it (the start command is relative — it runs from the live release):
-     weeny deploy postgres --from /root/postgres-app -- ./run.sh
+     weeny deploy postgres -- ./run.sh
 
 5. Create a database + an app role for your other apps to connect with:
      sudo -u postgres psql -c "CREATE DATABASE appdb;"
@@ -36,7 +36,7 @@ public internet). Apps on the box reach it at 127.0.0.1:5432.
    ready if you later switch pg_hba.conf to scram-sha-256). Never `weeny expose` postgres.
 
 Durability: everything above — the apt-installed binaries, the cluster in
-/data/apps/postgres/data, and the weeny app registration — lives on the machine's one
+/data/postgres/data, and the weeny app registration — lives on the machine's one
 persistent disk, so it all survives a rebuild. The cluster sits in /data on purpose:
 `weeny rollback` swaps the code back to an earlier release, and your database must not
 travel with it. The postgres BINARIES are a host service (apt/systemd territory) —

@@ -48,19 +48,38 @@ commands; omit `--build` if there's nothing to build). The push uploads your fol
 builds it in a fresh release on the server, health-checks it, and only then switches it
 live. **A failed build or a crashing app leaves the previous version serving** — you're
 never half-deployed. After the first push the commands are remembered:
-`npx weeny-cloud push ./myapp` re-deploys with the same build/start.
+`npx weeny-cloud push ./myapp` re-deploys with the same build/start. (The app name is
+inferred from the folder name — keep passing it explicitly whenever they differ.)
 
-Working on the server instead? Same transaction from any directory:
-`weeny deploy myapp --from /path/to/source --build "<cmd>" -- <start command>`.
-(`git clone` wherever you like — your workspace is yours; weeny copies from it at deploy
-and never writes to it.)
+Working on the server instead? Same transaction, run where the code lives:
+`weeny deploy myapp --build "<cmd>" -- <start command>` — the source defaults to
+`/workspace/myapp`, the server's convention for project source (backed up; `git init`
+it). Code elsewhere? Pass `--from <dir>` — your workspace is yours; weeny copies from
+it at deploy and never writes to it.
 
 Starting an app from scratch? Use the default stack — Node + SQLite (built in, zero
 deps), any frontend: `curl https://app.weeny.cloud/recipes/default.txt`. Framework app?
 `curl https://app.weeny.cloud/recipes/nextjs.txt`. On a teeny (1 GB) box don't build
 server-side — `curl https://app.weeny.cloud/recipes/teeny.txt`.
 
-**3. Put it on the internet** (on the server — `npx weeny-cloud ssh` gets you there):
+**3. Put it on the internet** (on the server — `npx weeny-cloud ssh` gets you there).
+Before the first expose, write an `llms.txt` in the app root — a short markdown
+manifest so other agents can use the app (expose refuses without one). Skeleton:
+
+```
+# myapp — one-line purpose
+Auth: none | private — see GET /__weeny.
+## Endpoints
+- GET  /items          → JSON list of items
+- POST /items {name}   → creates; returns {id}
+## Semantics
+ids are stable; list is newest-first.
+```
+
+Weeny reads it at deploy time and serves it at `https://<url>/llms.txt` — don't add a
+route for it. It ships with each release (rollback restores the matching docs), so
+editing it is part of changing the API. App genuinely not for agents (a pure-visual
+page, say)? `weeny expose myapp 3000 --no-agents` — flag last. Then:
 
 ```
 weeny env myapp KEY=value        # secrets/config if needed (encrypted; restarts the app)
@@ -93,7 +112,15 @@ Agents and terminals can use a private app too — as any allowed user, not just
 owner: `npx weeny-cloud token <host>` (signed in on the laptop) prints a 12h bearer;
 call the app with `Authorization: Bearer <token>` and it still sees `X-Weeny-User`.
 People you `allow` can sign in to weeny with just their email — no invite needed
-(view-only). Every weeny app describes itself and how to connect at `GET /__weeny`.
+(view-only). Every weeny app describes itself and how to connect at `GET /__weeny`;
+a private app's `/llms.txt` is served only to allowed callers — anyone else gets a
+401 JSON with connect instructions and a `login_url`.
+
+`npx weeny-cloud apps` lists everything the signed-in user can reach — their apps AND
+the private apps shared with them (owner, how they're allowed in, what each app does
+from its llms.txt). Same data at `GET /api/apps/reachable` with a CLI bearer. Working
+with an app someone shared with your user? Find it there, read its `/llms.txt`, mint
+a token, call it.
 
 ## Custom domains
 
@@ -102,7 +129,7 @@ DNS provider. Bare `weeny domain myapp` checks progress; `--remove` detaches.
 
 ## Rules that matter
 
-- **Durable state belongs in `$WEENY_DATA_DIR`** (`/data/apps/<name>`). This is the one
+- **Durable state belongs in `$WEENY_DATA_DIR`** (`/data/<name>`). This is the one
   rule to get right: every deploy is a fresh copy of your code and `weeny rollback` swaps
   code backward, so anything stored beside the code travels with it. Databases, uploads,
   anything you'd hate to lose — `$WEENY_DATA_DIR`. It's created for you, exported to your
@@ -111,6 +138,7 @@ DNS provider. Bare `weeny domain myapp` checks progress; `--remove` detaches.
 - Re-exposing an app keeps its URL (change ports freely); `weeny remove` releases it for
   good. A brand-new URL can take ~1 min to resolve everywhere — retry, don't panic.
 - Everything exposed is **public** unless you used `--private` — don't expose secrets.
+- First expose needs an `llms.txt` in the app root (or `--no-agents`) — see step 3.
 - Don't touch `cloudflared` (it's the only route to the internet).
 - Workers/crons: same deploy, just don't `expose` them.
 - If push output warns the box is running out of memory (or an app gets OOM-killed),
@@ -140,17 +168,18 @@ release lifecycle, and rollback never touches them.
 
 ## Commands (the complete list)
 
-Laptop: `npx weeny-cloud` · `login` · `create` · `push [folder] [app] [--build] [--health] [-- <start>]` · `ssh [command]` · `token <host>` · `keys` · `tier` · `skill` · `help`
-Server: `weeny` · `deploy <app> --from <dir> -- <cmd>` · `start` · `stop` · `restart` ·
-`releases` · `rollback <app> [release]` · `deployments` · `inspect` · `expose <app> <port>` ·
+Laptop: `npx weeny-cloud` · `login` · `create` · `push [folder] [app] [--build] [--health] [-- <start>]` · `ssh [command]` · `apps` · `token <host>` · `keys` · `tier` · `skill` · `help`
+Server: `weeny` · `deploy <app> [--from <dir>] -- <cmd>` · `start` · `stop` · `restart` ·
+`releases` · `rollback <app> [release]` · `deployments` · `inspect` · `expose <app> <port> [--private] [--no-agents]` ·
 `unexpose` · `remove` · `env <app> [K=V]` · `domain <app> [host]` · `allow <app> [email]` ·
 `revoke` · `health` · `help`
 Logs are Linux: `journalctl -u weeny-<app> -f`.
 To make a code change live it's a push (or `weeny deploy`) — restart only bounces what's
 already deployed.
 
-Layout: `/apps/<app>/current` the release running now (a symlink — `readlink` shows which) ·
-`$WEENY_DATA_DIR` = `/data/apps/<app>` your data (never rolled back) · your source stays
-wherever you work.
+Layout (three roots, named by who writes them): `/workspace/<app>` your source — weeny
+reads it, never writes it (backed up; deploy's default `--from`) · `$WEENY_DATA_DIR` =
+`/data/<app>` your app's data (never rolled back) · `/apps/<app>/current` the release
+running now (a symlink — `readlink` shows which; weeny's machinery, rebuilt by deploys).
 
 Full reference: https://app.weeny.cloud/llms-full.txt

@@ -190,6 +190,7 @@ function commandList() {
   npx weeny-cloud create           get your server (~2 min)
   npx weeny-cloud push [folder]    deploy this folder to your server (re-push = new release)
   npx weeny-cloud ssh [command]    go to the server — that's where the power is
+  npx weeny-cloud apps             every app you can reach — yours + shared with you
   npx weeny-cloud token <host>     bearer token to call a private app from a terminal/agent
   npx weeny-cloud keys             this account's device keys (list, --revoke, --register)
   npx weeny-cloud tier             see plans / change size (humans decide this one)
@@ -312,8 +313,15 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     } catch {
       die(`this server doesn't speak the push protocol — update it (ssh in and re-run the installer), or deploy on the server: weeny deploy ${app} --from <dir> -- <command>`)
     }
-    if (!begin.defaults?.start?.length && !startArgv.length)
+    if (!begin.defaults?.start?.length && !startArgv.length) {
+      // The trap here: the app name defaults to the FOLDER name. If someone re-pushes an
+      // existing app from a folder named differently, this looks like a first push of a
+      // brand-new app — and a blind retry with `-- <cmd>` would mint a duplicate. Say so.
+      if (!pos[1]) die(`no app called '${app}' on your server yet — that name came from the folder.\n` +
+        `  updating an existing app with a different name? pass it: npx weeny-cloud push ${pos[0] ?? '.'} <app-name>\n` +
+        `  deploying '${app}' as a NEW app? add its start command: npx weeny-cloud push ${pos[0] ?? '.'} ${app} -- <command>`)
       die(`first push of '${app}' needs a start command — end the line with: -- <command> [args…]\n  e.g. npx weeny-cloud push ${pos[0] ?? '.'} ${app} -- npm start`)
+    }
 
     // Ship SOURCE only. Always skip node_modules (must be built on the Linux server — Mac-built
     // native binaries won't run there) and .git. Also respect .gitignore (build outputs like
@@ -442,6 +450,31 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     console.log(`✓ you're on ${want}${r.resizing ? ' — server resizing now (back in ~a minute)' : ''}`)
   },
 
+  // Everything you can reach: your apps + apps shared with you (weeny allow).
+  async apps() {
+    const r = await call('/api/apps/reachable')
+    const owned = r.owned ?? [], shared = r.shared ?? []
+    const pad = (s, n) => String(s ?? '').padEnd(n)
+    const urlOf = (a) => a.url ?? '(not exposed)'
+    const w1 = Math.max(4, ...[...owned, ...shared].map(a => a.name.length))
+    const w2 = Math.max(12, ...[...owned, ...shared].map(a => urlOf(a).length))
+
+    console.log('your apps')
+    if (!owned.length) console.log('  none yet — npx weeny-cloud push ./myapp deploys one')
+    for (const a of owned)
+      console.log(`  ${pad(a.name, w1)}  ${pad(urlOf(a), w2)}  ${pad(a.status, 8)}  on ${a.machine}${a.private ? '  🔒' : ''}`)
+
+    console.log('\nshared with you')
+    if (!shared.length) console.log('  none yet — apps someone `weeny allow`s you into appear here')
+    for (const a of shared) {
+      const via = a.basis === 'direct' ? '' : `  via ${a.basis.replace(/^domain:/, '')}`
+      console.log(`  ${pad(a.name, w1)}  ${pad(urlOf(a), w2)}  by ${a.owner}${via}  🔒`)
+      if (a.blurb) console.log(`  ${' '.repeat(w1)}  ${a.blurb}`)
+    }
+    if ([...owned, ...shared].some(a => a.private))
+      console.log(`\n🔒 private — mint a 12h bearer to call it from a terminal/agent: npx weeny-cloud token <host>`)
+  },
+
   // A 12h bearer for a private app you're allowed to view — how agents get in.
   async token() {
     const arg = positionals[0] ?? die('usage: npx weeny-cloud token <app-url-or-host>')
@@ -489,7 +522,9 @@ One server per account for now. Delete/suspend/rebuild live in the dashboard.`,
 Deploy a local folder to your server as a new release (name defaults to the folder's).
 First push needs the start command: end the line with \`-- <command>\`; a build step is
 your call too (\`--build "npm ci && npm run build"\`). After that, bare
-\`npx weeny-cloud push ./myapp\` re-deploys with the remembered commands.
+\`npx weeny-cloud push ./myapp\` re-deploys with the remembered commands — but keep
+passing the app name whenever it differs from the folder's (the name is inferred from
+the folder otherwise).
 
 Each push uploads into a fresh staging area (delta transfer against the live release),
 builds INSIDE the new release, health-checks it, and only then switches over — a failed
@@ -498,16 +533,25 @@ respects .gitignore (--all to override). Rollback: weeny rollback <app> on the s
   ssh: `npx weeny-cloud ssh [command]
 
 Open a shell on your server — or run one command and return. Uses the right key and IP
-so it always works. Your apps live in /apps, their data in /data/apps.
+so it always works. Your apps live in /apps, their data in /data.
 No SSH key on this device (new laptop, wiped machine)? No problem — as long as you're
 signed in, ssh generates and registers a fresh device key automatically.`,
+  apps: `npx weeny-cloud apps
+
+Every app you can reach: yours (with machine and URL) and the private apps other
+people have shared with you (weeny allow <app> <your-email> on their server) — each
+with its owner, how you're allowed in (directly or via your email domain), and what
+it does (from the app's own llms.txt). Private apps take a 12h bearer:
+npx weeny-cloud token <host>. Every listed app documents itself at GET /llms.txt.`,
   token: `npx weeny-cloud token <app-url-or-host>
 
-A private app someone shared with you (weeny expose --private + weeny allow)? This
-prints a 12-hour bearer token so you (or your agent) can call it from a terminal:
+Call a private app (weeny expose --private) from a terminal or agent. Already signed
+in on this machine? This is the whole flow — it prints a 12-hour bearer token:
 curl -H "Authorization: Bearer <token>" https://<host>/. The app sees your email in
-the X-Weeny-User header. Not allowed? Ask the owner: weeny allow <app> <your-email>.
-Any weeny app explains how to connect at GET /__weeny.`,
+the X-Weeny-User header. Not signed in? npx weeny-cloud login first (a private app's
+401 also carries a login_url for tools that can open a browser). Not allowed? Ask the
+owner: weeny allow <app> <your-email>. Any weeny app explains how to connect at
+GET /__weeny and, when it ships a manifest, documents its API at GET /llms.txt.`,
   keys: `npx weeny-cloud keys [--revoke <id>] [--register]
 
 Your account's device SSH keys (each signed-in laptop/agent registers its own).

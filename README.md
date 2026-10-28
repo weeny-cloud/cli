@@ -43,8 +43,6 @@ Docs for agents: https://weeny.cloud/llms.txt
 flat plans from $3/mo (founding), no usage metering. 7-day free trial, no card needed.
 Signup is waitlist-gated during launch — `npx weeny-cloud login` gets you a spot.
 
-## Founder feedback
-
 ## Testing an unpublished release
 
 Use a checkout of the candidate CLI with `WEENY_ENV=staging` and

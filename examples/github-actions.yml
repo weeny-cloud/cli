@@ -15,9 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      WEENY_CONFIG_DIR: ${{ runner.temp }}/weeny-profile
-      WEENY_SSH_KEY_FILE: ${{ runner.temp }}/weeny-ci/key
-      WEENY_KNOWN_HOSTS_FILE: ${{ runner.temp }}/weeny-ci/known_hosts
+      WEENY_CONFIG_DIR: ${{ github.workspace }}/.weeny-ci/profile
+      WEENY_SSH_KEY_FILE: ${{ github.workspace }}/.weeny-ci/key
+      WEENY_KNOWN_HOSTS_FILE: ${{ github.workspace }}/.weeny-ci/known_hosts
     steps:
       - uses: actions/checkout@v4
         with:

@@ -73,6 +73,8 @@ explains all forms; feedback is optional and never blocks deployment.
 The candidate CLI supports `WEENY_TOKEN`, `WEENY_SSH_KEY_FILE` and
 `WEENY_KNOWN_HOSTS_FILE` for noninteractive deployments. With these set, it never
 stores the token or registers a new SSH device; missing keys/host pins fail closed.
+CI uses a dedicated SSH configuration with strict checking, independent of existing
+`Host`, `Match` or `Include` rules. Credential file paths may contain spaces.
 Set `WEENY_CONFIG_DIR` to a runner-local directory so generated SSH configuration
 is isolated, including for production accounts. This support must be published
 before using it with the npm package; until then test the exact CLI commit.

@@ -18,7 +18,8 @@ const CI_CREDS = credentialsFromEnv(process.env, ENV)
 const API = ENV.api
 const DIR = ENV.dir
 const SSH_DIR = ENV.sshDir
-const SSH_CONFIG = join(SSH_DIR, 'config')
+// CI never inherits earlier Host/Match/Include rules from a user profile.
+const SSH_CONFIG = join(SSH_DIR, CI_CREDS ? 'ci-config' : 'config')
 const SSH_FLAGS = ENV.production && !process.env.WEENY_CONFIG_DIR && !CI_CREDS ? [] : ['-F', SSH_CONFIG]
 const shellQuote = v => `'${String(v).replace(/'/g, `'\\''`)}'`
 const SSH_COMMAND = ['ssh', ...SSH_FLAGS].map(shellQuote).join(' ')
@@ -75,14 +76,20 @@ const positionals = process.argv.slice(3).filter((a, i, all) => !a.startsWith('-
 //   tunnel (firecracker, no IP)  → ProxyCommand pipes through the VM's own tunnel (ssh-shim)
 // Marker-delimited and rewritten every call, so the ProxyCommand's node/cli path can't go
 // stale across npx versions. Returns the alias to target.
+function sshConfigPath(path) {
+  if (/[\r\n\0]/.test(path)) throw new Error('SSH credential paths cannot contain line breaks or NUL')
+  return '"' + path.replaceAll('\\', '\\\\').replaceAll('"', '\\"') + '"'
+}
+
 function ensureSshConfig(m, keyPath) {
   const tunnel = m.reachable === 'tunnel'
   const alias = !ENV.production ? `weeny-staging-${m.id}` : tunnel ? `weeny-${m.id}` : m.ip
   const knownHosts = CI_CREDS?.knownHosts || join(DIR, 'known_hosts')
   const lines = [`Host ${alias}`, `  User root`]
   if (!ENV.production) lines.push(`  HostKeyAlias ${alias}`) // disposable VMs may reuse an IP; pin trust to machine identity
-  if (keyPath) lines.push(`  IdentityFile ${keyPath}`)
-  lines.push(`  IdentitiesOnly yes`, `  StrictHostKeyChecking ${CI_CREDS ? 'yes' : 'accept-new'}`, `  UserKnownHostsFile ${knownHosts}`)
+  if (keyPath) lines.push(`  IdentityFile ${sshConfigPath(keyPath)}`)
+  lines.push(`  IdentitiesOnly yes`, `  StrictHostKeyChecking ${CI_CREDS ? 'yes' : 'accept-new'}`, `  UserKnownHostsFile ${sshConfigPath(knownHosts)}`)
+  if (CI_CREDS) lines.push('  GlobalKnownHostsFile /dev/null', '  BatchMode yes')
   if (tunnel) {
     const relay = [process.execPath, SELF, '_relay', m.id]
     if (!ENV.production) relay.unshift('env', 'WEENY_ENV=staging', `WEENY_API=${API}`, `WEENY_CONFIG_DIR=${DIR}`)
@@ -96,7 +103,7 @@ function ensureSshConfig(m, keyPath) {
 
   const cfg = SSH_CONFIG
   let existing = ''
-  try { existing = readFileSync(cfg, 'utf8') } catch {}
+  if (!CI_CREDS) try { existing = readFileSync(cfg, 'utf8') } catch {}
   // strip any prior weeny-managed block for this alias, then append the fresh one
   const stripped = existing.replace(new RegExp(`\\n?${begin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${end.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n?`, 'g'), '\n')
   mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 })

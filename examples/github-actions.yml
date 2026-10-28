@@ -1,0 +1,56 @@
+# Copy to .github/workflows/deploy.yml in your app repository.
+# Pin WEENY_CLI_SHA (repository variable) to the reviewed CLI commit supporting CI.
+name: Deploy to Weeny
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: weeny-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      WEENY_CONFIG_DIR: ${{ runner.temp }}/weeny-profile
+      WEENY_SSH_KEY_FILE: ${{ runner.temp }}/weeny-ci/key
+      WEENY_KNOWN_HOSTS_FILE: ${{ runner.temp }}/weeny-ci/known_hosts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check pinned CLI revision
+        env:
+          CLI_SHA: ${{ vars.WEENY_CLI_SHA }}
+        run: '[[ "$CLI_SHA" =~ ^[a-f0-9]{40}$ ]]'
+      - uses: actions/checkout@v4
+        with:
+          repository: weeny-cloud/cli
+          ref: ${{ vars.WEENY_CLI_SHA }}
+          path: .weeny-cli
+          persist-credentials: false
+      - run: npm install --ignore-scripts
+        working-directory: .weeny-cli
+      - name: Install dedicated deployment credentials
+        env:
+          PRIVATE_KEY: ${{ secrets.WEENY_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.WEENY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 "$(dirname "$WEENY_SSH_KEY_FILE")"
+          printf '%s\n' "$PRIVATE_KEY" > "$WEENY_SSH_KEY_FILE"
+          printf '%s\n' "$KNOWN_HOSTS" > "$WEENY_KNOWN_HOSTS_FILE"
+          chmod 600 "$WEENY_SSH_KEY_FILE" "$WEENY_KNOWN_HOSTS_FILE"
+      # Add your project's test command before deploying; adjust source/name/build/start.
+      # Keep the CLI outside app source so it is not uploaded as application code.
+      - name: Deploy checked source
+        env:
+          WEENY_TOKEN: ${{ secrets.WEENY_TOKEN }}
+        run: node .weeny-cli/cli.mjs push ./app myapp --build "npm ci" -- npm start
+      - if: always()
+        run: rm -rf "$WEENY_CONFIG_DIR" "$(dirname "$WEENY_SSH_KEY_FILE")"

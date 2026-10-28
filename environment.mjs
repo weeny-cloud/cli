@@ -20,11 +20,22 @@ export function cliEnvironment(env = process.env, home = homedir()) {
   const canonical = p => existsSync(p) ? realpathSync(p) : p
   if (!production && [base, home, '/', join(home, '.ssh'), join(home, '.claude'), join(home, '.codex')].some(p => canonical(dir) === canonical(p)))
     throw new Error('Staging needs its own configuration directory')
-  return { api, dir, production, sshDir: production ? join(home, '.ssh') : join(dir, 'ssh') }
+  return { api, dir, production, sshDir: production && !env.WEENY_CONFIG_DIR ? join(home, '.ssh') : join(dir, 'ssh') }
 }
 
 export function credentialsForOrigin(creds, environment) {
   if (!creds) return null
   if (creds.apiBase === environment.api || (!creds.apiBase && environment.production)) return creds
   throw new Error('Saved credentials belong to another API. Use a separate WEENY_CONFIG_DIR and log in again.')
+}
+
+// Explicit, noninteractive deployment credentials. Never persist the token or
+// enroll a new SSH device from a CI run; prepare/revoke that key separately.
+export function credentialsFromEnv(env, environment) {
+  if (!env.WEENY_TOKEN) return null
+  if (!/^weeny_[A-Za-z0-9_-]{20,}$/.test(env.WEENY_TOKEN)) throw new Error('Invalid WEENY_TOKEN')
+  if (!env.WEENY_SSH_KEY_FILE || !env.WEENY_KNOWN_HOSTS_FILE)
+    throw new Error('WEENY_TOKEN requires a pre-enrolled WEENY_SSH_KEY_FILE and pinned WEENY_KNOWN_HOSTS_FILE')
+  return { token: env.WEENY_TOKEN, apiBase: environment.api, keyPath: resolve(env.WEENY_SSH_KEY_FILE),
+    knownHosts: resolve(env.WEENY_KNOWN_HOSTS_FILE) }
 }

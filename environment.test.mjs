@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cliEnvironment, credentialsForOrigin } from './environment.mjs'
+import { cliEnvironment, credentialsForOrigin, credentialsFromEnv } from './environment.mjs'
 import { mkdtempSync, mkdirSync, symlinkSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -40,4 +40,17 @@ test('a symlink cannot redirect staging writes into the production profile', () 
     symlinkSync(join(home, '.weeny'), join(home, 'alias'))
     assert.throws(() => cliEnvironment({ WEENY_API: 'https://staging.weeny.cloud', WEENY_CONFIG_DIR: join(home, 'alias') }, home), /own configuration/)
   } finally { rmSync(home, { recursive: true, force: true }) }
+})
+
+test('explicit production profiles isolate SSH configuration for CI setup', () => {
+  const e = cliEnvironment({ WEENY_CONFIG_DIR: '/test-home/ci-profile' }, '/test-home')
+  assert.equal(e.sshDir, '/test-home/ci-profile/ssh')
+})
+test('CI credentials are explicit, origin-bound and require a pre-enrolled key and pinned hosts', () => {
+  const e = cliEnvironment({}, '/test-home')
+  assert.equal(credentialsFromEnv({}, e), null)
+  const env = { WEENY_TOKEN: 'weeny_' + 'a'.repeat(40), WEENY_SSH_KEY_FILE: '/tmp/ci-key', WEENY_KNOWN_HOSTS_FILE: '/tmp/ci-hosts' }
+  assert.deepEqual(credentialsFromEnv(env, e), { token: env.WEENY_TOKEN, apiBase: e.api, keyPath: '/tmp/ci-key', knownHosts: '/tmp/ci-hosts' })
+  for (const patch of [{ WEENY_TOKEN: 'bad-token' }, { WEENY_SSH_KEY_FILE: '' }, { WEENY_KNOWN_HOSTS_FILE: '' }])
+    assert.throws(() => credentialsFromEnv({ ...env, ...patch }, e))
 })

@@ -45,6 +45,19 @@ Signup is waitlist-gated during launch — `npx weeny-cloud login` gets you a sp
 
 ## Founder feedback
 
+## Testing an unpublished release
+
+Use a checkout of the candidate CLI with `WEENY_ENV=staging` and
+`WEENY_API=https://staging.weeny.cloud`. Set `WEENY_CONFIG_DIR` to a dedicated test
+profile, or let the CLI choose a separate profile for that API origin. Run
+`node /path/to/candidate/cli.mjs <command>` rather than the public npm release.
+Staging refuses the production API, binds saved tokens to their origin, and uses
+separate SSH keys/config, known-hosts and skill files. The `skill` command fetches
+staging instructions and rewrites their CLI commands to invoke this exact candidate
+with the staging environment, without modifying your installed production skill.
+
+## Founder feedback
+
 Preview a short report with `npx weeny-cloud feedback --file feedback.md` (or pass
 a quoted message, or `-` for stdin). Nothing is sent by default. After reviewing
 and approving the exact draft, add `--confirm` to email it and your account email

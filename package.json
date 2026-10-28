@@ -25,11 +25,12 @@
   "files": [
     "cli.mjs",
     "feedback.mjs",
+    "environment.mjs",
     "README.md"
   ],
   "type": "module",
   "scripts": {
-    "test": "node --test feedback.test.mjs"
+    "test": "node --test *.test.mjs"
   },
   "bin": {
     "weeny-cloud": "cli.mjs"

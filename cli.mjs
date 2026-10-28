@@ -9,17 +9,27 @@ import { homedir } from 'node:os'
 import { join, resolve, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { feedbackHelp, runFeedback } from './feedback.mjs'
+import { cliEnvironment, credentialsForOrigin } from './environment.mjs'
 
 const SELF = fileURLToPath(import.meta.url)   // absolute path to this cli.mjs (for ProxyCommand)
 
-const API = process.env.WEENY_API || 'https://weeny.cloud'
-const DIR = join(homedir(), '.weeny')
+const ENV = cliEnvironment()
+const API = ENV.api
+const DIR = ENV.dir
+const SSH_DIR = ENV.sshDir
+const SSH_CONFIG = join(SSH_DIR, 'config')
+const SSH_FLAGS = ENV.production ? [] : ['-F', SSH_CONFIG]
+const shellQuote = v => `'${String(v).replace(/'/g, `'\\''`)}'`
+const SSH_COMMAND = ['ssh', ...SSH_FLAGS].map(shellQuote).join(' ')
 const CREDS = join(DIR, 'credentials.json')
+if (!ENV.production) console.error(`STAGING: ${API} — isolated account and SSH profile`)
 
 const die = (msg) => { console.error(`✗ ${msg}`); process.exit(1) }
 
 function loadCreds() {
-  try { return JSON.parse(readFileSync(CREDS, 'utf8')) } catch { return null }
+  let creds
+  try { creds = JSON.parse(readFileSync(CREDS, 'utf8')) } catch { return null }
+  return credentialsForOrigin(creds, ENV)
 }
 
 async function call(path, { method = 'GET', body, auth = true } = {}) {
@@ -29,7 +39,8 @@ async function call(path, { method = 'GET', body, auth = true } = {}) {
     if (!creds?.token) die(`not signed in — run: npx weeny-cloud login`)
     headers.Authorization = `Bearer ${creds.token}`
   }
-  const res = await fetch(API + path, { method, headers, body: body ? JSON.stringify(body) : undefined })
+  const res = await fetch(API + path, { method, headers, body: body ? JSON.stringify(body) : undefined,
+    ...(ENV.production ? {} : { redirect: 'error' }) })
   const json = await res.json().catch(() => ({}))
   if (res.status === 401 && auth) die('session expired or revoked — run: npx weeny-cloud login')
   if (res.status === 402) {
@@ -64,13 +75,16 @@ const positionals = process.argv.slice(3).filter((a, i, all) => !a.startsWith('-
 // stale across npx versions. Returns the alias to target.
 function ensureSshConfig(m, keyPath) {
   const tunnel = m.reachable === 'tunnel'
-  const alias = tunnel ? `weeny-${m.id}` : m.ip
-  const knownHosts = join(homedir(), '.weeny', 'known_hosts')
+  const alias = !ENV.production ? `weeny-staging-${m.id}` : tunnel ? `weeny-${m.id}` : m.ip
+  const knownHosts = join(DIR, 'known_hosts')
   const lines = [`Host ${alias}`, `  User root`]
+  if (!ENV.production) lines.push(`  HostKeyAlias ${alias}`) // disposable VMs may reuse an IP; pin trust to machine identity
   if (keyPath) lines.push(`  IdentityFile ${keyPath}`)
   lines.push(`  StrictHostKeyChecking accept-new`, `  UserKnownHostsFile ${knownHosts}`)
   if (tunnel) {
-    lines.push(`  ProxyCommand ${JSON.stringify(process.execPath)} ${JSON.stringify(SELF)} _relay ${m.id}`,
+    const relay = [process.execPath, SELF, '_relay', m.id]
+    if (!ENV.production) relay.unshift('env', 'WEENY_ENV=staging', `WEENY_API=${API}`, `WEENY_CONFIG_DIR=${DIR}`)
+    lines.push(`  ProxyCommand ${relay.map(shellQuote).join(' ')}`,
       `  ServerAliveInterval 30`)
   } else {
     lines.push(`  HostName ${m.ip}`)
@@ -78,19 +92,19 @@ function ensureSshConfig(m, keyPath) {
   const begin = `# >>> weeny ${alias}`, end = `# <<< weeny ${alias}`
   const block = `${begin}\n${lines.join('\n')}\n${end}\n`
 
-  const cfg = join(homedir(), '.ssh', 'config')
+  const cfg = SSH_CONFIG
   let existing = ''
   try { existing = readFileSync(cfg, 'utf8') } catch {}
   // strip any prior weeny-managed block for this alias, then append the fresh one
   const stripped = existing.replace(new RegExp(`\\n?${begin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${end.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n?`, 'g'), '\n')
-  mkdirSync(join(homedir(), '.ssh'), { recursive: true })
-  mkdirSync(join(homedir(), '.weeny'), { recursive: true })
+  mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 })
+  mkdirSync(DIR, { recursive: true, mode: 0o700 })
   writeFileSync(cfg, stripped.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '') + (stripped.endsWith('\n') || !stripped ? '' : '\n') + block, { mode: 0o600 })
   return alias
 }
 
 function findPublicKey() {
-  const sshDir = join(homedir(), '.ssh')
+  const sshDir = SSH_DIR
   const preferred = ['id_ed25519.pub', 'weeny_ed25519.pub', 'id_rsa.pub']
   for (const f of preferred) if (existsSync(join(sshDir, f))) return { path: join(sshDir, f), key: readFileSync(join(sshDir, f), 'utf8').trim() }
   try {
@@ -104,8 +118,8 @@ function findPublicKey() {
 // sessions that predate storing it.
 function sshKeyPath() {
   const stored = loadCreds()?.keyPath
-  if (stored && existsSync(stored)) return stored
-  const weeny = join(homedir(), '.ssh', 'weeny_ed25519')
+  if (stored && existsSync(stored) && (ENV.production || resolve(stored).startsWith(SSH_DIR + '/'))) return stored
+  const weeny = join(SSH_DIR, 'weeny_ed25519')
   if (existsSync(weeny)) return weeny
   return null
 }
@@ -115,9 +129,9 @@ function sshKeyPath() {
 async function registerDeviceKey() {
   let keyPath = sshKeyPath()
   if (!keyPath) {
-    console.log('no SSH key on this device — generating ~/.ssh/weeny_ed25519')
-    mkdirSync(join(homedir(), '.ssh'), { recursive: true })
-    keyPath = join(homedir(), '.ssh', 'weeny_ed25519')
+    console.log(`no SSH key on this device — generating ${join(SSH_DIR, 'weeny_ed25519')}`)
+    mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 })
+    keyPath = join(SSH_DIR, 'weeny_ed25519')
     execFileSync('ssh-keygen', ['-t', 'ed25519', '-N', '', '-C', 'weeny', '-f', keyPath])
   }
   const publicKey = readFileSync(`${keyPath}.pub`, 'utf8').trim()
@@ -177,7 +191,7 @@ async function orient() {
     if (m.status === 'running') {
       try { ensureSshConfig(m, key) } catch {}
       // tunnel machines (firecracker) have no routable IP — the way in is the CLI
-      sshCmd = m.reachable === 'tunnel' ? 'npx weeny-cloud ssh' : `ssh root@${m.ip}`
+      sshCmd = !ENV.production || m.reachable === 'tunnel' ? 'npx weeny-cloud ssh' : `ssh root@${m.ip}`
     }
     console.log(`server: ${m.status}  ${sshCmd}  ${m.error ? `(${m.error.slice(0, 60)})` : ''}`)
   }
@@ -228,15 +242,16 @@ const commands = {
       return
     }
     mkdirSync(DIR, { recursive: true })
-    writeFileSync(CREDS, JSON.stringify({ email: v.email, token: v.token }, null, 2), { mode: 0o600 })
+    writeFileSync(CREDS, JSON.stringify({ email: v.email, token: v.token, apiBase: API }, null, 2), { mode: 0o600 })
     console.log(`✓ signed in as ${v.email}`)
   },
 
   async create() {
     let pub = findPublicKey()
     if (!pub) {
-      console.log('no SSH key found — generating ~/.ssh/weeny_ed25519')
-      execFileSync('ssh-keygen', ['-t', 'ed25519', '-N', '', '-C', 'weeny', '-f', join(homedir(), '.ssh', 'weeny_ed25519')])
+      mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 })
+      console.log(`no SSH key found — generating ${join(SSH_DIR, 'weeny_ed25519')}`)
+      execFileSync('ssh-keygen', ['-t', 'ed25519', '-N', '', '-C', 'weeny', '-f', join(SSH_DIR, 'weeny_ed25519')])
       pub = findPublicKey()
     }
     console.log(`using SSH key: ${pub.path}`)
@@ -257,7 +272,7 @@ const commands = {
         if (creds) writeFileSync(CREDS, JSON.stringify({ ...creds, keyPath }, null, 2), { mode: 0o600 })
         // Firecracker boxes have no public IP — the way in is `npx weeny-cloud ssh` (rides the
         // VM's own tunnel). Direct machines get the classic ssh line.
-        const wayIn = mine.reachable === 'tunnel' ? `npx weeny-cloud ssh` : `ssh root@${mine.ip}`
+        const wayIn = !ENV.production || mine.reachable === 'tunnel' ? `npx weeny-cloud ssh` : `ssh root@${mine.ip}`
         console.log(`
 ✓ your server is ready
 
@@ -316,7 +331,7 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     // fails here, before a single byte is uploaded.
     let begin
     try {
-      const out = execFileSync('ssh', [host, `weeny _deploy-begin ${app}`], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'] })
+      const out = execFileSync('ssh', [...SSH_FLAGS, host, `weeny _deploy-begin ${app}`], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'] })
       begin = JSON.parse(out.trim().split('\n').pop())
     } catch {
       die(`this server doesn't speak the push protocol — update it (ssh in and re-run the installer), or deploy on the server: weeny deploy ${app} --from <dir> -- <command>`)
@@ -352,12 +367,12 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     const filters = ['--exclude', '.git', '--exclude', 'node_modules', ...(useGitignore ? ['--filter', ':- .gitignore'] : [])]
     const copyDest = begin.baseReleaseId ? ['--copy-dest', `/apps/${app}/current`] : []
     try {
-      execFileSync('rsync', ['-az', ...filters, ...copyDest, '-e', 'ssh', `${dir}/`, `${host}:${begin.incomingDir}/`], { stdio: 'inherit' })
+      execFileSync('rsync', ['-az', ...filters, ...copyDest, '-e', SSH_COMMAND, `${dir}/`, `${host}:${begin.incomingDir}/`], { stdio: 'inherit' })
     } catch {
       // no rsync — tar over ssh into the same staging dir (host + incomingDir are safe
       // server-generated tokens). Same empty-destination semantics; no delta.
-      const tarExcl = `--exclude .git --exclude node_modules${useGitignore ? ` --exclude-from=${JSON.stringify(join(dir, '.gitignore'))}` : ''}`
-      execSync(`tar -C ${JSON.stringify(dir)} ${tarExcl} -czf - . | ssh ${host} 'tar -xzf - -C ${begin.incomingDir}'`, { stdio: 'inherit' })
+      const tarExcl = `--exclude .git --exclude node_modules${useGitignore ? ` --exclude-from=${shellQuote(join(dir, '.gitignore'))}` : ''}`
+      execSync(`tar -C ${shellQuote(dir)} ${tarExcl} -czf - . | ${SSH_COMMAND} ${shellQuote(host)} 'tar -xzf - -C ${begin.incomingDir}'`, { stdio: 'inherit' })
     }
     console.log(`✓ uploaded`)
 
@@ -371,7 +386,7 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     if ('tag' in f) parts.push('--tag', shq(f.tag))
     if (git) parts.push('--git-b64', Buffer.from(JSON.stringify(git)).toString('base64'))
     if (startArgv.length) parts.push('--', ...startArgv.map(shq))
-    try { execFileSync('ssh', [host, parts.join(' ')], { stdio: 'inherit' }) }
+    try { execFileSync('ssh', [...SSH_FLAGS, host, parts.join(' ')], { stdio: 'inherit' }) }
     catch (e) {
       if (e.status === 3) console.error(`  retry: npx weeny-cloud push ${pos[0] ?? '.'} ${app}`)
       process.exit(e.status ?? 1)
@@ -383,7 +398,7 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     const m = await runningMachine()
     const { host } = await sshTarget(m)
     const rest = process.argv.slice(3)
-    try { execFileSync('ssh', [...(rest.length ? [] : ['-t']), host, ...rest], { stdio: 'inherit' }) }
+    try { execFileSync('ssh', [...SSH_FLAGS, ...(rest.length ? [] : ['-t']), host, ...rest], { stdio: 'inherit' }) }
     catch (e) { process.exit(e.status ?? 1) }
   },
 
@@ -495,11 +510,18 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
   },
 
   async skill() {
-    const dir = join(homedir(), '.claude', 'skills', 'weeny')
+    const dir = ENV.production ? join(homedir(), '.claude', 'skills', 'weeny') : join(DIR, 'skills', 'weeny')
     mkdirSync(dir, { recursive: true })
-    const res = await fetch('https://weeny.cloud/weeny-skill.md')
+    const res = await fetch(API + '/weeny-skill.md', ENV.production ? {} : { redirect: 'error' })
     if (!res.ok) die('could not fetch the skill')
-    writeFileSync(join(dir, 'SKILL.md'), await res.text())
+    let skill = await res.text()
+    if (!ENV.production) {
+      const invoke = ['env', 'WEENY_ENV=staging', `WEENY_API=${API}`, `WEENY_CONFIG_DIR=${DIR}`, process.execPath, SELF].map(shellQuote).join(' ')
+      skill = skill.replaceAll('npx weeny-cloud', invoke)
+        .replaceAll('https://weeny.cloud', API)
+    }
+    writeFileSync(join(dir, 'SKILL.md'), skill)
+    if (!ENV.production) return console.log(`✓ staged skill → ${dir}/SKILL.md\nAsk your test agent to read this file. Your production agent skills were not changed.`)
     console.log(`✓ installed the weeny skill → ${dir}/SKILL.md
 Your Claude Code now knows how to deploy to weeny. Try: "deploy this app to weeny".`)
   },

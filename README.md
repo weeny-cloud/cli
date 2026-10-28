@@ -43,6 +43,17 @@ Docs for agents: https://weeny.cloud/llms.txt
 flat plans from $3/mo (founding), no usage metering. 7-day free trial, no card needed.
 Signup is waitlist-gated during launch — `npx weeny-cloud login` gets you a spot.
 
+## Testing an unpublished release
+
+Use a checkout of the candidate CLI with `WEENY_ENV=staging` and
+`WEENY_API=https://staging.weeny.cloud`. Set `WEENY_CONFIG_DIR` to a dedicated test
+profile, or let the CLI choose a separate profile for that API origin. Run
+`node /path/to/candidate/cli.mjs <command>` rather than the public npm release.
+Staging refuses the production API, binds saved tokens to their origin, and uses
+separate SSH keys/config, known-hosts and skill files. The `skill` command fetches
+staging instructions and rewrites their CLI commands to invoke this exact candidate
+with the staging environment, without modifying your installed production skill.
+
 ## Founder feedback
 
 Preview a short report with `npx weeny-cloud feedback --file feedback.md` (or pass

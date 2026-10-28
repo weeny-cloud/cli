@@ -9,16 +9,18 @@ import { homedir } from 'node:os'
 import { join, resolve, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { feedbackHelp, runFeedback } from './feedback.mjs'
-import { cliEnvironment, credentialsForOrigin } from './environment.mjs'
+import { cliEnvironment, credentialsForOrigin, credentialsFromEnv } from './environment.mjs'
 
 const SELF = fileURLToPath(import.meta.url)   // absolute path to this cli.mjs (for ProxyCommand)
 
 const ENV = cliEnvironment()
+const CI_CREDS = credentialsFromEnv(process.env, ENV)
 const API = ENV.api
 const DIR = ENV.dir
 const SSH_DIR = ENV.sshDir
-const SSH_CONFIG = join(SSH_DIR, 'config')
-const SSH_FLAGS = ENV.production ? [] : ['-F', SSH_CONFIG]
+// CI never inherits earlier Host/Match/Include rules from a user profile.
+const SSH_CONFIG = join(SSH_DIR, CI_CREDS ? 'ci-config' : 'config')
+const SSH_FLAGS = ENV.production && !process.env.WEENY_CONFIG_DIR && !CI_CREDS ? [] : ['-F', SSH_CONFIG]
 const shellQuote = v => `'${String(v).replace(/'/g, `'\\''`)}'`
 const SSH_COMMAND = ['ssh', ...SSH_FLAGS].map(shellQuote).join(' ')
 const CREDS = join(DIR, 'credentials.json')
@@ -27,6 +29,7 @@ if (!ENV.production) console.error(`STAGING: ${API} — isolated account and SSH
 const die = (msg) => { console.error(`✗ ${msg}`); process.exit(1) }
 
 function loadCreds() {
+  if (CI_CREDS) return CI_CREDS
   let creds
   try { creds = JSON.parse(readFileSync(CREDS, 'utf8')) } catch { return null }
   return credentialsForOrigin(creds, ENV)
@@ -73,14 +76,20 @@ const positionals = process.argv.slice(3).filter((a, i, all) => !a.startsWith('-
 //   tunnel (firecracker, no IP)  → ProxyCommand pipes through the VM's own tunnel (ssh-shim)
 // Marker-delimited and rewritten every call, so the ProxyCommand's node/cli path can't go
 // stale across npx versions. Returns the alias to target.
+function sshConfigPath(path) {
+  if (/[\r\n\0]/.test(path)) throw new Error('SSH credential paths cannot contain line breaks or NUL')
+  return '"' + path.replaceAll('\\', '\\\\').replaceAll('"', '\\"') + '"'
+}
+
 function ensureSshConfig(m, keyPath) {
   const tunnel = m.reachable === 'tunnel'
   const alias = !ENV.production ? `weeny-staging-${m.id}` : tunnel ? `weeny-${m.id}` : m.ip
-  const knownHosts = join(DIR, 'known_hosts')
+  const knownHosts = CI_CREDS?.knownHosts || join(DIR, 'known_hosts')
   const lines = [`Host ${alias}`, `  User root`]
   if (!ENV.production) lines.push(`  HostKeyAlias ${alias}`) // disposable VMs may reuse an IP; pin trust to machine identity
-  if (keyPath) lines.push(`  IdentityFile ${keyPath}`)
-  lines.push(`  StrictHostKeyChecking accept-new`, `  UserKnownHostsFile ${knownHosts}`)
+  if (keyPath) lines.push(`  IdentityFile ${sshConfigPath(keyPath)}`)
+  lines.push(`  IdentitiesOnly yes`, `  StrictHostKeyChecking ${CI_CREDS ? 'yes' : 'accept-new'}`, `  UserKnownHostsFile ${sshConfigPath(knownHosts)}`)
+  if (CI_CREDS) lines.push('  GlobalKnownHostsFile /dev/null', '  BatchMode yes')
   if (tunnel) {
     const relay = [process.execPath, SELF, '_relay', m.id]
     if (!ENV.production) relay.unshift('env', 'WEENY_ENV=staging', `WEENY_API=${API}`, `WEENY_CONFIG_DIR=${DIR}`)
@@ -94,7 +103,7 @@ function ensureSshConfig(m, keyPath) {
 
   const cfg = SSH_CONFIG
   let existing = ''
-  try { existing = readFileSync(cfg, 'utf8') } catch {}
+  if (!CI_CREDS) try { existing = readFileSync(cfg, 'utf8') } catch {}
   // strip any prior weeny-managed block for this alias, then append the fresh one
   const stripped = existing.replace(new RegExp(`\\n?${begin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${end.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n?`, 'g'), '\n')
   mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 })
@@ -117,6 +126,10 @@ function findPublicKey() {
 // The key create() enrolled on the server — stored in creds; sensible fallbacks for
 // sessions that predate storing it.
 function sshKeyPath() {
+  if (CI_CREDS) {
+    if (!existsSync(CI_CREDS.keyPath) || !existsSync(CI_CREDS.knownHosts)) die('CI SSH key or pinned known-hosts file is missing')
+    return CI_CREDS.keyPath
+  }
   const stored = loadCreds()?.keyPath
   if (stored && existsSync(stored) && (ENV.production || resolve(stored).startsWith(SSH_DIR + '/'))) return stored
   const weeny = join(SSH_DIR, 'weeny_ed25519')
@@ -126,8 +139,9 @@ function sshKeyPath() {
 // No key on this device? Login is the root of trust: generate one and register it with
 // the account — the control plane pushes it to the server. A wiped laptop recovers with
 // just `login` + `ssh`.
-async function registerDeviceKey() {
-  let keyPath = sshKeyPath()
+async function registerDeviceKey(explicitKey) {
+  if (CI_CREDS) die('CI credentials cannot enroll devices; pre-enroll the deployment key from a signed-in local session')
+  let keyPath = explicitKey ? resolve(explicitKey) : sshKeyPath()
   if (!keyPath) {
     console.log(`no SSH key on this device — generating ${join(SSH_DIR, 'weeny_ed25519')}`)
     mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 })
@@ -139,7 +153,7 @@ async function registerDeviceKey() {
   console.log(`→ registered this device's key with your weeny account`)
   if (unsynced?.length) console.log(`  (couldn't reach: ${unsynced.join(', ')} — it'll pick the key up when it's next running)`)
   const creds = loadCreds()
-  if (creds) writeFileSync(CREDS, JSON.stringify({ ...creds, keyPath }, null, 2), { mode: 0o600 })
+  if (creds && !explicitKey) writeFileSync(CREDS, JSON.stringify({ ...creds, keyPath }, null, 2), { mode: 0o600 })
   return keyPath
 }
 
@@ -224,6 +238,7 @@ const commands = {
     } catch (e) { die(e.message) }
   },
   async login() {
+    if (CI_CREDS) die('Unset WEENY_TOKEN before interactive login; CI uses the provided credentials')
     const email = flags.email || await ask('email: ')
     if (!flags.code) {
       await call('/api/auth/code', { method: 'POST', body: { email }, auth: false })
@@ -235,7 +250,7 @@ const commands = {
       }
     }
     const code = flags.code || await ask('code: ')
-    const v = await call('/api/auth/verify', { method: 'POST', body: { email, code, client: 'cli', label: `cli@${process.env.USER || 'unknown'}` }, auth: false })
+    const v = await call('/api/auth/verify', { method: 'POST', body: { email, code, client: 'cli', label: flags.label || `cli@${process.env.USER || 'unknown'}` }, auth: false })
     if (v.status === 'waitlisted') {
       console.log(`\nThanks for your interest in weeny. There's too much demand for our weeny servers to spin you up right now.`)
       console.log(`You're #${v.position ?? '?'} on the waitlist — we'll email ${email} as soon as we have capacity.`)
@@ -247,6 +262,7 @@ const commands = {
   },
 
   async create() {
+    if (CI_CREDS) die('CI deployment credentials use an existing server; provision it from a signed-in local session first')
     let pub = findPublicKey()
     if (!pub) {
       mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 })
@@ -439,7 +455,7 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
       for (const k of keys) console.log(`  ${k.id}  ${k.label ?? ''}  ${k.preview}  (${k.createdAt})`)
       return
     }
-    if ('register' in flags) return registerDeviceKey()
+    if ('register' in flags) return registerDeviceKey(flags['key-file'])
     const { keys } = await call('/api/ssh-keys')
     if (!keys.length) return console.log('no keys registered — `npx weeny-cloud ssh` sets one up')
     for (const k of keys) console.log(`${k.id}  ${k.label ?? ''}  ${k.preview}  (${k.createdAt})`)

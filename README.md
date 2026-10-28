@@ -66,3 +66,31 @@ sending. Describe observed successes, errors, workarounds and unclear instructio
 Exclude secrets, source code, conversation transcripts and private project details.
 No logs or diagnostics are attached automatically. `npx weeny-cloud help feedback`
 explains all forms; feedback is optional and never blocks deployment.
+
+
+## Deploying from GitHub Actions
+
+The candidate CLI supports `WEENY_TOKEN`, `WEENY_SSH_KEY_FILE` and
+`WEENY_KNOWN_HOSTS_FILE` for noninteractive deployments. With these set, it never
+stores the token or registers a new SSH device; missing keys/host pins fail closed.
+CI uses a dedicated SSH configuration with strict checking, independent of existing
+`Host`, `Match` or `Include` rules. Credential file paths may contain spaces.
+Set `WEENY_CONFIG_DIR` to a runner-local directory so generated SSH configuration
+is isolated, including for production accounts. This support must be published
+before using it with the npm package; until then test the exact CLI commit.
+
+Prepare once from a trusted machine: create a dedicated login/profile with
+`login --label github-actions`, generate an SSH key, and register it with
+`keys --register --key-file /path/to/ci_ed25519`. Run one trusted SSH connection
+using that key and copy the verified known-hosts entry into the environment secret.
+Store the dedicated login token, private key and known-hosts contents as GitHub
+**environment secrets**, never in repository files. These credentials are currently
+account/server-wide, not app-scoped; use a dedicated account/server where isolation
+is required. Revoking a device key and revoking its CLI token are separate operations.
+
+See [the Actions example](examples/github-actions.yml). It runs only after an
+explicit main-branch dispatch, uses an exact CLI SHA, serializes deployments and
+uses the normal transactional `push` health/rollback flow. Use a protected GitHub
+production environment with required reviewers where your plan supports it.
+Staging and production apps/credentials should have separate environments. Test
+PRs without secrets; do not deploy untrusted forks using `pull_request_target`.

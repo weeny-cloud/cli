@@ -26,7 +26,8 @@
     "cli.mjs",
     "feedback.mjs",
     "environment.mjs",
-    "README.md"
+    "README.md",
+    "examples/github-actions.yml"
   ],
   "type": "module",
   "scripts": {

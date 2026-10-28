@@ -69,3 +69,14 @@ test('old control planes, network errors and missing identities do not fail a de
     await showFeedbackInvitation({ apiBase: 'https://example.test', token: 'test' }, { fetcher, print: () => assert.fail('unexpected invitation') })
   await showFeedbackInvitation(null)
 })
+
+test('stdin trims a trailing newline before enforcing the draft limit, while bounding raw input', async () => {
+  const drafts = []
+  const opts = { command, send: async p => drafts.push(p.message), print: () => {} }
+  await runFeedback(['-', '--confirm'], { ...opts, stdin: Readable.from(['x'.repeat(8000), '\n']) })
+  assert.deepEqual(drafts, ['x'.repeat(8000)])
+  for (const raw of ['x'.repeat(8001), ' '.repeat(32001)]) {
+    await assert.rejects(runFeedback(['-', '--confirm'], { ...opts, stdin: Readable.from([raw]) }), /1–8000/)
+  }
+  assert.equal(drafts.length, 1)
+})

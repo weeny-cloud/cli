@@ -43,7 +43,7 @@ export async function runFeedback(argv, { command, send, stdin = process.stdin, 
     stdin.setEncoding('utf8')
     for await (const chunk of stdin) {
       message += chunk
-      if (message.length > LIMIT) throw new Error(`Feedback must be 1–${LIMIT} characters`)
+      if (message.length > LIMIT * 4) throw new Error(`Feedback must be 1–${LIMIT} characters`)
     }
   } else if (file !== undefined) {
     // Bound reads before loading a file; allow four UTF-8 bytes per character.

@@ -42,3 +42,16 @@ Docs for agents: https://weeny.cloud/llms.txt
 
 flat plans from $3/mo (founding), no usage metering. 7-day free trial, no card needed.
 Signup is waitlist-gated during launch — `npx weeny-cloud login` gets you a spot.
+
+## Founder feedback
+
+Preview a short report with `npx weeny-cloud feedback --file feedback.md` (or pass
+a quoted message, or `-` for stdin). Nothing is sent by default. After reviewing
+and approving the exact draft, add `--confirm` to email it and your account email
+to Theo, Weeny's founder, so he can reply.
+
+Coding agents: finish the user's task, show the draft and ask permission before
+sending. Describe observed successes, errors, workarounds and unclear instructions.
+Exclude secrets, source code, conversation transcripts and private project details.
+No logs or diagnostics are attached automatically. `npx weeny-cloud help feedback`
+explains all forms; feedback is optional and never blocks deployment.

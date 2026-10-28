@@ -1,6 +1,6 @@
 {
   "name": "weeny-cloud",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "weeny.cloud \u2014 a teeny weeny, simple wimple cloud for coding agents",
   "homepage": "https://weeny.cloud",
   "repository": {
@@ -24,9 +24,13 @@
   ],
   "files": [
     "cli.mjs",
+    "feedback.mjs",
     "README.md"
   ],
   "type": "module",
+  "scripts": {
+    "test": "node --test feedback.test.mjs"
+  },
   "bin": {
     "weeny-cloud": "cli.mjs"
   },

@@ -8,6 +8,7 @@ import { createInterface } from 'node:readline/promises'
 import { homedir } from 'node:os'
 import { join, resolve, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { feedbackHelp, runFeedback } from './feedback.mjs'
 
 const SELF = fileURLToPath(import.meta.url)   // absolute path to this cli.mjs (for ProxyCommand)
 
@@ -194,6 +195,7 @@ function commandList() {
   npx weeny-cloud token <host>     bearer token to call a private app from a terminal/agent
   npx weeny-cloud keys             this account's device keys (list, --revoke, --register)
   npx weeny-cloud tier             see plans / change size (humans decide this one)
+  npx weeny-cloud feedback         preview feedback for Theo (send only with --confirm)
   npx weeny-cloud skill            teach your coding agent all of this
   npx weeny-cloud help [command]   details + examples
 
@@ -201,6 +203,12 @@ on the server, apps are run with \`weeny\` — bare \`weeny\` there explains its
 }
 
 const commands = {
+  async feedback() {
+    try {
+      await runFeedback(process.argv.slice(3), { command: 'npx weeny-cloud feedback',
+        send: body => call('/api/feedback', { method: 'POST', body }) })
+    } catch (e) { die(e.message) }
+  },
   async login() {
     const email = flags.email || await ask('email: ')
     if (!flags.code) {
@@ -505,6 +513,7 @@ Your Claude Code now knows how to deploy to weeny. Try: "deploy this app to ween
 }
 
 const HELP = {
+  feedback: feedbackHelp('npx weeny-cloud feedback'),
   login: `npx weeny-cloud login [--email x@y.com] [--code 123456]
 
 Sign in (or claim a waitlist spot) with your email — weeny sends a 6-digit code.

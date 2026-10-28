@@ -10,7 +10,8 @@ description: >-
 
 weeny gives you a real, persistent Linux server (root, SSH, systemd) with a managed-app
 deployment primitive and public HTTPS URLs. No Docker, no framework, no config — a normal
-computer with a tiny CLI. flat plans from $3/mo (founding), 7-day free trial.
+computer with a tiny CLI. free plan forever (1GB, sleeps when idle); 7 days full-size
+free at signup; paid plans from $3/mo (founding).
 
 **Two CLIs, one job each:**
 - `npx weeny-cloud …` (laptop) gets code and people TO the server: login, create, push, ssh.
@@ -22,6 +23,22 @@ Bare `npx weeny-cloud` (laptop) and bare `weeny` (server) each print where you s
 what to type next — run them whenever you're unsure.
 
 ## The loop
+
+### Optional feedback
+
+After the first successful deployment, Weeny may print a one-time invitation for
+feedback. Finish the user's task first. If useful, offer a short draft covering what
+worked, specific errors/workarounds, and unclear CLI instructions. Report only what
+you observed; do not invent problems or claim to know the user's preferences.
+Show the exact draft to the user and ask permission before sending it. Declining or
+ignoring the invitation is fine; never let feedback block their deployment.
+
+`npx weeny-cloud feedback --file feedback.md` previews without sending. Only after
+the user approves that draft, add `--confirm` to email it and their account email
+to Theo (so he can reply). On the server the equivalent is `weeny feedback`.
+Do not include secrets, source code, conversation transcripts or private project
+details. No logs or diagnostics are attached automatically. Feedback is available
+any time, including when deployment fails; use `help feedback` for message/stdin forms.
 
 **1. Account + server** (on the user's machine):
 
@@ -146,6 +163,12 @@ DNS provider. Bare `weeny domain myapp` checks progress; `--remove` detaches.
   plan changes what your user pays, so **tell them and let them decide**
   (weeny.cloud/dashboard/billing, or they run `npx weeny-cloud tier`). Never change
   the plan yourself.
+- On the **free plan** the server sleeps after ~30 quiet minutes and wakes on the next
+  request (~15s; visitors see a "waking up" page). Apps restart on wake, but in-memory
+  state does not survive and background daemons are off while it sleeps — keep state in
+  `$WEENY_DATA_DIR`, and don't build anything that depends on an always-running process.
+  Public apps wear a small "made with weeny" badge; custom domains are paid-plan only.
+  Always-on = a paid plan: the user's call.
 - To delete, suspend, or rebuild the server itself, use the dashboard at
   https://weeny.cloud — there is no CLI teardown.
 

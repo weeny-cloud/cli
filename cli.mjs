@@ -255,6 +255,7 @@ const commands = {
   },
 
   async create() {
+    if (CI_CREDS) die('CI deployment credentials use an existing server; provision it from a signed-in local session first')
     let pub = findPublicKey()
     if (!pub) {
       mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 })
@@ -277,7 +278,7 @@ const commands = {
         const keyPath = pub.path.replace(/\.pub$/, '')
         ensureSshConfig(mine, keyPath)   // writes the direct or tunnel ssh-config block
         const creds = loadCreds()
-        if (creds && !explicitKey) writeFileSync(CREDS, JSON.stringify({ ...creds, keyPath }, null, 2), { mode: 0o600 })
+        if (creds) writeFileSync(CREDS, JSON.stringify({ ...creds, keyPath }, null, 2), { mode: 0o600 })
         // Firecracker boxes have no public IP — the way in is `npx weeny-cloud ssh` (rides the
         // VM's own tunnel). Direct machines get the classic ssh line.
         const wayIn = !ENV.production || mine.reachable === 'tunnel' ? `npx weeny-cloud ssh` : `ssh root@${mine.ip}`

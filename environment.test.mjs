@@ -1,6 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { cliEnvironment, credentialsForOrigin } from './environment.mjs'
+import { mkdtempSync, mkdirSync, symlinkSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 test('production keeps its existing paths and legacy credentials', () => {
   const c = cliEnvironment({}, '/test-home')
@@ -29,4 +32,12 @@ test('refuses contradictory modes, shared production storage and unsafe API orig
     { WEENY_API: 'https://staging.weeny.cloud', WEENY_CONFIG_DIR: '/test-home/.weeny' },
   ]) assert.throws(() => cliEnvironment(env, '/test-home'))
   assert.equal(cliEnvironment({ WEENY_API: 'http://127.0.0.1:3123' }, '/test-home').production, false)
+})
+test('a symlink cannot redirect staging writes into the production profile', () => {
+  const home = mkdtempSync(join(tmpdir(), 'weeny-profile-test-'))
+  try {
+    mkdirSync(join(home, '.weeny'))
+    symlinkSync(join(home, '.weeny'), join(home, 'alias'))
+    assert.throws(() => cliEnvironment({ WEENY_API: 'https://staging.weeny.cloud', WEENY_CONFIG_DIR: join(home, 'alias') }, home), /own configuration/)
+  } finally { rmSync(home, { recursive: true, force: true }) }
 })

@@ -78,6 +78,7 @@ function ensureSshConfig(m, keyPath) {
   const alias = !ENV.production ? `weeny-staging-${m.id}` : tunnel ? `weeny-${m.id}` : m.ip
   const knownHosts = join(DIR, 'known_hosts')
   const lines = [`Host ${alias}`, `  User root`]
+  if (!ENV.production) lines.push(`  HostKeyAlias ${alias}`) // disposable VMs may reuse an IP; pin trust to machine identity
   if (keyPath) lines.push(`  IdentityFile ${keyPath}`)
   lines.push(`  StrictHostKeyChecking accept-new`, `  UserKnownHostsFile ${knownHosts}`)
   if (tunnel) {
@@ -517,6 +518,7 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     if (!ENV.production) {
       const invoke = ['env', 'WEENY_ENV=staging', `WEENY_API=${API}`, `WEENY_CONFIG_DIR=${DIR}`, process.execPath, SELF].map(shellQuote).join(' ')
       skill = skill.replaceAll('npx weeny-cloud', invoke)
+        .replaceAll('https://weeny.cloud', API)
     }
     writeFileSync(join(dir, 'SKILL.md'), skill)
     if (!ENV.production) return console.log(`✓ staged skill → ${dir}/SKILL.md\nAsk your test agent to read this file. Your production agent skills were not changed.`)

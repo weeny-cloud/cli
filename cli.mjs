@@ -259,6 +259,11 @@ const commands = {
     mkdirSync(DIR, { recursive: true })
     writeFileSync(CREDS, JSON.stringify({ email: v.email, token: v.token, apiBase: API }, null, 2), { mode: 0o600 })
     console.log(`✓ signed in as ${v.email}`)
+    if (v.serverAccess === 'waitlisted') {
+      console.log(`Your account is ready. You're #${v.position ?? '?'} on the free trial waitlist; no trial time has started.`)
+      console.log(`View your place and any available paid plans: ${API}/dashboard/account#billing`)
+      console.log('Only the human should choose a paid plan; direct paid access charges immediately without a free trial.')
+    }
   },
 
   async create() {
@@ -272,6 +277,11 @@ const commands = {
     }
     console.log(`using SSH key: ${pub.path}`)
     const m = await call('/api/machines', { method: 'POST', body: { sshPublicKey: pub.key } })
+    if (m.waitingForCapacity) {
+      console.log(`Your request for ${m.name} is queued for ${m.capacityStatus === 'capacity_exhausted' ? 'server' : 'free'} capacity. Your account and approval are saved.${m.trialPending?' Your trial starts when the server is ready.':''}`)
+      console.log(`Check progress with npx weeny-cloud. Available paid plans: ${API}/dashboard/account#billing — choosing to pay is up to you.`)
+      return
+    }
     console.log(`→ setting up your server ${m.name} (takes ~2 minutes)…`)
     let notePrinted = false
     for (;;) {
@@ -554,7 +564,7 @@ const HELP = {
   feedback: feedbackHelp('npx weeny-cloud feedback'),
   login: `npx weeny-cloud login [--email x@y.com] [--code 123456]
 
-Sign in (or claim a waitlist spot) with your email — weeny sends a 6-digit code.
+Create an account and sign in (free server access may be waitlisted) with your email — weeny sends a 6-digit code.
 Non-interactive (for agents): pass --email first, then re-run with --email + --code.
 The code lands in the human's inbox — unless you already have access to their emails,
 stop and ask them to provide the code.

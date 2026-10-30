@@ -110,6 +110,8 @@ test('bare CLI shows a free server once without rechecking admission or waking i
     assert.match(r.stdout, /server: sleeping/)
     assert.equal((r.stderr.match(/Free ·/g) ?? []).length, 1)
     assert.match(r.stderr, /17 idle minutes/)
+    assert.match(r.stderr, /dashboard\/account#billing/)
+    assert.doesNotMatch(r.stderr, /dashboard\/account#servers/)
     assert.doesNotMatch(r.stdout, /idle minutes/)
   } finally { f.close() }
 })
@@ -145,7 +147,7 @@ process.on('exit',()=>{assert.equal(reads,3);assert.equal(posts,${initial === 's
       assert.equal(r.status, 0, r.stderr)
       assert.equal(r.stdout, 'payload\n')
       assert.equal((r.stderr.match(/waking your server/g) ?? []).length, 1)
-      assert.doesNotMatch(r.stderr, /Free ·|larger builds|dashboard\/account#billing/)
+      assert.doesNotMatch(r.stderr, /Free ·|larger builds|dashboard\/account#/)
     } finally { f.close() }
   })
 }
@@ -212,7 +214,7 @@ syncBuiltinESMExports();process.on('exit',()=>{assert.ok(finalized);assert.equal
       assert.equal((r.stderr.match(/larger builds may run out of memory/g) ?? []).length, expected ? 1 : 0)
       assert.doesNotMatch(r.stdout, /larger builds may run out of memory|Free ·|Tell your human/)
       assert.match(r.stdout, /\{"deployed":true\}/)
-      assert.doesNotMatch(r.stderr, /dashboard\/account#billing/)
+      assert.doesNotMatch(r.stderr, /dashboard\/account#/)
     } finally { f.close() }
   })
 }
@@ -298,10 +300,11 @@ for (const trialAvailable of [false, true]) {
       assert.match(r.stderr, /Paid server available/)
       assert.match(r.stderr, /Only the human should choose a paid plan/)
       assert.match(r.stderr, /charges immediately without a free trial/)
-      assert.equal((r.stderr.match(/\/dashboard\/account#billing/g) ?? []).length, 1)
+      assert.equal((r.stderr.match(/\/dashboard\/account#servers/g) ?? []).length, 1)
       assert.ok(r.stderr.indexOf('Paid server available') < r.stderr.indexOf('Free 1 GB server available') || trialAvailable)
       if (trialAvailable) assert.ok(r.stderr.indexOf('Full-size trial available') < r.stderr.indexOf('Paid server available'))
-      assert.doesNotMatch(r.stdout, /paid plan|Paid server|\/dashboard\/account#billing/)
+      assert.doesNotMatch(r.stdout, /paid plan|Paid server|\/dashboard\/account#/)
+      assert.doesNotMatch(r.stderr, /dashboard\/account#billing/)
     } finally { f.close() }
   })
 }
@@ -316,8 +319,9 @@ test('an unavailable creation leads with available paid capacity and then offers
     assert.equal(r.status, 1)
     assert.ok(r.stderr.indexOf('Paid server available') < r.stderr.indexOf('Free 1 GB server available'))
     assert.match(r.stderr, /Only the human should choose a paid plan/)
-    assert.equal((r.stderr.match(/\/dashboard\/account#billing/g) ?? []).length, 1)
-    assert.doesNotMatch(r.stdout, /Paid server|\/dashboard\/account#billing/)
+    assert.equal((r.stderr.match(/\/dashboard\/account#servers/g) ?? []).length, 1)
+    assert.doesNotMatch(r.stdout, /Paid server|\/dashboard\/account#/)
+    assert.doesNotMatch(r.stderr, /dashboard\/account#billing/)
   } finally { f.close() }
 })
 
@@ -330,9 +334,9 @@ test('a failed free claim does not repeat its human paid link', () => {
   try {
     const r = f.run('create', '--free')
     assert.equal(r.status, 1)
-    assert.match(r.stderr, /Paid upgrade.*Ask your human to choose/)
-    assert.equal((r.stderr.match(/\/dashboard\/account#billing/g) ?? []).length, 1)
-    assert.doesNotMatch(r.stdout, /\/dashboard\/account#billing/)
+    assert.match(r.stderr, /Paid server available.*Only the human should choose/)
+    assert.equal((r.stderr.match(/\/dashboard\/account#servers/g) ?? []).length, 1)
+    assert.doesNotMatch(r.stdout, /\/dashboard\/account#servers/)
   } finally { f.close() }
 })
 

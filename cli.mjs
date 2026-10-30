@@ -208,14 +208,14 @@ let paidChoiceShown = false
 function paidChoice(access = {}, upgrade = false) {
   if (paidChoiceShown || access.paid) return
   paidChoiceShown = true
-  const url = `${API}/dashboard/account#billing`
+  const url = `${API}/dashboard/account#${upgrade ? 'billing' : 'servers'}`
   if (upgrade) return console.error(`Paid upgrade for always-on hosting or more RAM. Ask your human to choose: ${url}`)
   const available = access.plans?.some(plan => plan.available)
   console.error(`${available ? 'Paid server available' : 'Paid plans (check availability)'}. Only the human should choose a paid plan (direct paid access charges immediately without a free trial): ${url}`)
 }
 function freeNotice(machine = {}) {
   console.error(`Free · 1 GB RAM · sleeps after ${idleMinutes(machine)} idle minutes; wakes on request. Tell your human about sleeping. Build larger apps locally or in CI, then push.`)
-  paidChoice(machine, true)
+  paidChoice(machine, machine.hasServer || machine.tier === 'free')
 }
 
 // Availability is supplied by the same admission policy as create. Looking does not
@@ -644,7 +644,7 @@ key (generates ~/.ssh/weeny_ed25519 if you have none). Default requests a full-s
 a 1 GB free server immediately, subject to separate free capacity. Tell your human
 that it sleeps after inactivity and wakes on request; build larger apps locally or
 in CI. Existing paid accounts keep their purchased plan. Paid choices are the human's.
-Paid option: ask your human to choose at ${API}/dashboard/account#billing.
+Paid option: ask your human to choose at ${API}/dashboard/account#servers.
 One server per account for now. Delete/suspend/rebuild live in the dashboard.`,
   push: `npx weeny-cloud push [folder] [app-name] [--build "<cmd>"] [--health "<cmd>"] [--tag "<text>"] [--all] [-- <start command>]
 

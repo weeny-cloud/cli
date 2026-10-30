@@ -49,7 +49,7 @@ npx weeny-cloud create       # ~2 min; prints the ssh command
 
 Login only verifies the account. Always relay the paid option alongside free offers,
 especially when a free server or trial is unavailable: the human can buy an available
-server at https://weeny.cloud/dashboard/account#billing for always-on apps, custom
+server at https://weeny.cloud/dashboard/account#servers for always-on apps, custom
 domains and no badge. Direct paid checkout charges immediately, without a trial;
 the human chooses and completes payment. Never purchase automatically.
 `create --free` provisions an available 1GB free server. An unavailable creation saves

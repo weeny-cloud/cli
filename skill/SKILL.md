@@ -10,8 +10,8 @@ description: >-
 
 weeny gives you a real, persistent Linux server (root, SSH, systemd) with a managed-app
 deployment primitive and public HTTPS URLs. No Docker, no framework, no config — a normal
-computer with a tiny CLI. free plan forever (1GB, sleeps when idle); 7 days full-size
-free at signup; paid plans from $3/mo (founding).
+computer with a tiny CLI. Paid plans from $3/mo (founding); limited 1GB free servers
+and seven-day full-size trials. Trial days start when the server is ready.
 
 **Two CLIs, one job each:**
 - `npx weeny-cloud …` (laptop) gets code and people TO the server: login, create, push, ssh.
@@ -47,9 +47,12 @@ npx weeny-cloud login        # email → 6-digit code (ask the user to read it o
 npx weeny-cloud create       # ~2 min; prints the ssh command
 ```
 
-Login only verifies the account. If `create` reports no trial capacity, relay the
-available choices to your human: `create --free` immediately provisions an available
-1GB free server, or the human can choose a paid plan. An unavailable creation saves
+Login only verifies the account. Always relay the paid option alongside free offers,
+especially when a free server or trial is unavailable: the human can buy an available
+server at https://weeny.cloud/dashboard/account#billing for always-on apps, custom
+domains and no badge. Direct paid checkout charges immediately, without a trial;
+the human chooses and completes payment. Never purchase automatically.
+`create --free` provisions an available 1GB free server. An unavailable creation saves
 the request for notification; it does not start a trial or reserve a server.
 On free, tell the human the server sleeps after the reported idle period and wakes
 on demand. On any 1GB server (free or teeny), prefer local/CI builds for larger apps;
@@ -166,7 +169,7 @@ DNS provider. Bare `weeny domain myapp` checks progress; `--remove` detaches.
 - If push output warns the box is running out of memory (or an app gets OOM-killed),
   that's a memory problem, not a code problem — `weeny health` has the detail. A bigger
   plan changes what your user pays, so **tell them and let them decide**
-  (weeny.cloud/dashboard/billing, or they run `npx weeny-cloud tier`). Never change
+  (weeny.cloud/dashboard/account#billing, or they run `npx weeny-cloud tier`). Never change
   the plan yourself.
 - On the **free plan** the server sleeps after ~30 quiet minutes and wakes on the next
   request (~15s; visitors see a "waking up" page). Apps restart on wake, but in-memory
@@ -213,4 +216,3 @@ running now (a symlink — `readlink` shows which; weeny's machinery, rebuilt by
 Full reference: https://weeny.cloud/llms-full.txt
 
 
-Free trial admission is subject to available capacity. Verified users can sign in while waiting. When offered, direct paid access starts a paid subscription immediately, without a free trial. The human chooses and completes any purchase in the dashboard; agents must never buy a plan automatically.

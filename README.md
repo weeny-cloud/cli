@@ -41,7 +41,9 @@ Docs for agents: https://weeny.cloud/llms.txt
 ## Pricing
 
 flat plans from $3/mo (founding), no usage metering. 7-day free trial, no card needed.
-Signup is waitlist-gated during launch — `npx weeny-cloud login` gets you a spot.
+Login verifies the account without allocating compute. `create` requests an
+available full-size trial; `create --free` starts directly on the 1GB sleeping
+free plan. An unavailable creation saves a server request for notification.
 
 ## Testing an unpublished release
 

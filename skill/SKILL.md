@@ -47,8 +47,13 @@ npx weeny-cloud login        # email → 6-digit code (ask the user to read it o
 npx weeny-cloud create       # ~2 min; prints the ssh command
 ```
 
-Everyone gets an email code; if verifying it says the user is waitlisted, tell them their
-spot is claimed — access is gated.
+Login only verifies the account. If `create` reports no trial capacity, relay the
+available choices to your human: `create --free` immediately provisions an available
+1GB free server, or the human can choose a paid plan. An unavailable creation saves
+the request for notification; it does not start a trial or reserve a server.
+On free, tell the human the server sleeps after the reported idle period and wakes
+on demand. On any 1GB server (free or teeny), prefer local/CI builds for larger apps;
+use the existing teeny recipe. Keep the normal push/ssh workflow.
 
 Lost SSH access (new laptop, deleted key)? `login` then `ssh` — a fresh device key is
 generated and registered automatically. `npx weeny-cloud keys` lists/revokes device keys.
@@ -206,3 +211,6 @@ reads it, never writes it (backed up; deploy's default `--from`) · `$WEENY_DATA
 running now (a symlink — `readlink` shows which; weeny's machinery, rebuilt by deploys).
 
 Full reference: https://weeny.cloud/llms-full.txt
+
+
+Free trial admission is subject to available capacity. Verified users can sign in while waiting. When offered, direct paid access starts a paid subscription immediately, without a free trial. The human chooses and completes any purchase in the dashboard; agents must never buy a plan automatically.

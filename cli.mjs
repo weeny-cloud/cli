@@ -322,7 +322,7 @@ const commands = {
       pub = findPublicKey()
     }
     console.log(`using SSH key: ${pub.path}`)
-    const m = await call('/api/machines', { method: 'POST', body: { sshPublicKey: pub.key, offer: free ? 'free' : 'trial' } })
+    const m = await call('/api/machines', { method: 'POST', body: { sshPublicKey: pub.key, ...(free ? { offer: 'free' } : {}) } })
     if (m.waitingForCapacity) {
       console.error(`Your request for ${m.name} is queued for ${m.capacityStatus === 'capacity_exhausted' ? 'server' : 'free'} capacity. Your account and approval are saved.${m.trialPending?' Your trial starts when the server is ready.':''}`)
       console.error(`Check progress with npx weeny-cloud. Available paid plans: ${API}/dashboard/account#billing — only your human should choose to pay.`)

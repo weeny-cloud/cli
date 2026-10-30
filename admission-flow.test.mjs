@@ -53,11 +53,11 @@ globalThis.fetch=async(url,opts)=>{
   } finally { f.close() }
 })
 
-test('default creation requests the trial offer without changing a paid server or claiming free limits', () => {
+test('default creation lets the server choose the existing entitlement without claiming free limits', () => {
   const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/machines')});
  const paid={...machine,tier:'weeny',memMb:4096};
- if(opts.method==='POST') assert.equal(JSON.parse(opts.body).offer,'trial');
+ if(opts.method==='POST') assert.ok(!Object.hasOwn(JSON.parse(opts.body),'offer'));
  return Response.json(opts.method==='POST'?paid:{machines:[paid]});
 };`)
   try {

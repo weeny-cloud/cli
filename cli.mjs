@@ -204,8 +204,18 @@ async function runningMachine() {
 
 const accessObject = access => typeof access === 'string' ? { status: access } : access ?? {}
 const idleMinutes = machine => Number(machine?.freeIdleMinutes) > 0 ? Number(machine.freeIdleMinutes) : 30
+let paidChoiceShown = false
+function paidChoice(access = {}, upgrade = false) {
+  if (paidChoiceShown || access.paid) return
+  paidChoiceShown = true
+  const url = `${API}/dashboard/account#billing`
+  if (upgrade) return console.error(`Paid upgrade for always-on hosting or more RAM. Ask your human to choose: ${url}`)
+  const available = access.plans?.some(plan => plan.available)
+  console.error(`${available ? 'Paid server available' : 'Paid plans (check availability)'}. Only the human should choose a paid plan (direct paid access charges immediately without a free trial): ${url}`)
+}
 function freeNotice(machine = {}) {
   console.error(`Free · 1 GB RAM · sleeps after ${idleMinutes(machine)} idle minutes; wakes on request. Tell your human about sleeping. Build larger apps locally or in CI, then push.`)
+  paidChoice(machine, true)
 }
 
 // Availability is supplied by the same admission policy as create. Looking does not
@@ -213,6 +223,7 @@ function freeNotice(machine = {}) {
 function serverChoices(raw, position) {
   const access = accessObject(raw)
   if (access.hasServer || ['ready', 'provisioning'].includes(access.status)) return
+  if (!access.offers?.trial?.available && access.plans?.some(plan => plan.available)) paidChoice(access)
   if (access.offers?.trial?.available)
     console.error('Full-size trial available — npx weeny-cloud create. Seven days start when your server is ready.')
   if (access.offers?.free?.available)
@@ -221,11 +232,10 @@ function serverChoices(raw, position) {
     console.error('Your paid server is available — npx weeny-cloud create uses your purchased plan.')
   if (access.status === 'waitlisted') {
     console.error(`Your account is ready.${position ? ` You're #${position} on the waitlist.` : ' You are waiting for a server.'} No trial time has started.`)
-    console.error(`Check availability and paid plans: ${API}/dashboard/account#billing`)
-    console.error('Only the human should choose a paid plan; direct paid access charges immediately without a free trial.')
   } else if (!access.offers && access.status === 'unrequested') {
     console.error('No server yet — check availability with npx weeny-cloud create, or choose create --free for a free 1 GB server.')
   }
+  if (access.offers || ['waitlisted', 'unrequested'].includes(access.status)) paidChoice(access)
 }
 
 // Bare `weeny-cloud`: where you stand + what to type next. Replaces status/whoami.
@@ -326,9 +336,10 @@ const commands = {
     if (m.unsynced?.length) die(`Device key saved, but its server could not be reached: ${m.unsynced.join(', ')}. Retry create before connecting.`)
     if (m.waitingForCapacity) {
       console.error(`Your request for ${m.name} is queued for ${m.capacityStatus === 'capacity_exhausted' ? 'server' : 'free'} capacity. Your account and approval are saved.${m.trialPending?' Your trial starts when the server is ready.':''}`)
-      console.error(`Check progress with npx weeny-cloud. Available paid plans: ${API}/dashboard/account#billing — only your human should choose to pay.`)
+      paidChoice()
       return
     }
+    if (m.trialPending) paidChoice({}, true)
     if (['sleeping', 'resuming'].includes(m.status)) await runningMachine()
     console.log(['queued', 'provisioning'].includes(m.status)
       ? `→ setting up your server ${m.name} (takes ~2 minutes)…`
@@ -633,6 +644,7 @@ key (generates ~/.ssh/weeny_ed25519 if you have none). Default requests a full-s
 a 1 GB free server immediately, subject to separate free capacity. Tell your human
 that it sleeps after inactivity and wakes on request; build larger apps locally or
 in CI. Existing paid accounts keep their purchased plan. Paid choices are the human's.
+Paid option: ask your human to choose at ${API}/dashboard/account#billing.
 One server per account for now. Delete/suspend/rebuild live in the dashboard.`,
   push: `npx weeny-cloud push [folder] [app-name] [--build "<cmd>"] [--health "<cmd>"] [--tag "<text>"] [--all] [-- <start command>]
 

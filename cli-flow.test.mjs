@@ -47,8 +47,8 @@ test('waitlisted login saves an origin-bound account token and explains paid acc
     delete env.WEENY_TOKEN;delete env.WEENY_SSH_KEY_FILE;delete env.WEENY_KNOWN_HOSTS_FILE
     const r=spawnSync(process.execPath,['--import',preload,fileURLToPath(new URL('./cli.mjs',import.meta.url)),'login','--email','waiting@example.test','--code','123456'],{env,encoding:'utf8',timeout:10000})
     assert.equal(r.status,0,r.stderr)
-    assert.match(r.stdout,/#7.*free trial waitlist/)
-    assert.match(r.stdout,/charges immediately without a free trial/)
+    assert.match(r.stderr,/#7.*waitlist/)
+    assert.match(r.stderr,/charges immediately without a free trial/)
     assert.deepEqual(JSON.parse(readFileSync(join(profile,'credentials.json'),'utf8')),{email:'waiting@example.test',token:'waitlisted-token',apiBase:'http://127.0.0.1:3123'})
   } finally {rmSync(dir,{recursive:true,force:true})}
 })
@@ -63,6 +63,6 @@ test('a free capacity queue returns promptly without pretending provisioning has
   const env={...process.env,WEENY_ENV:'staging',WEENY_API:'http://127.0.0.1:3123',WEENY_CONFIG_DIR:profile}
   delete env.WEENY_TOKEN;delete env.WEENY_SSH_KEY_FILE;delete env.WEENY_KNOWN_HOSTS_FILE
   const r=spawnSync(process.execPath,['--import',preload,fileURLToPath(new URL('./cli.mjs',import.meta.url)),'create'],{env,encoding:'utf8',timeout:10000})
-  assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/queued for free capacity/);assert.doesNotMatch(r.stdout,/takes ~2 minutes/)
+  assert.equal(r.status,0,r.stderr);assert.match(r.stderr,/queued for free capacity/);assert.doesNotMatch(r.stdout,/takes ~2 minutes/)
  }finally{rmSync(dir,{recursive:true,force:true})}
 })

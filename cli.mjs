@@ -52,7 +52,11 @@ async function call(path, { method = 'GET', body, auth = true } = {}) {
     if (url) console.error(`\nSort it out here:\n\n  ${url}\n\nThen run this command again.`)
     process.exit(1)
   }
-  if (!res.ok) die(json.statusMessage || json.message || `${method} ${path} → ${res.status}`)
+  if (!res.ok) {
+    if (method === 'POST' && path === '/api/machines' && (json.data?.offers || json.data?.code === 'waitlisted'))
+      serverChoices({ ...json.data, status: 'waitlisted' }, json.data?.position)
+    die(json.statusMessage || json.message || `${method} ${path} → ${res.status}`)
+  }
   return json
 }
 
@@ -182,8 +186,46 @@ const sshTarget = async (m) => {
 async function runningMachine() {
   const { machines } = await call('/api/machines')
   const m = machines.find(x => x.status === 'running')
-  if (!m) die(machines.length ? `no running server (status: ${machines[0].status}) — check: npx weeny-cloud` : 'no server yet — run: npx weeny-cloud create')
-  return m
+  if (m) return m
+  const waking = machines.find(x => ['sleeping', 'resuming'].includes(x.status))
+  if (!waking) die(machines.length ? `no running server (status: ${machines[0].status}) — check: npx weeny-cloud` : 'no server yet — run: npx weeny-cloud create')
+  console.error('→ waking your server…')
+  if (waking.status === 'sleeping') await call(`/api/machines/${waking.id}/resume`, { method: 'POST' })
+  for (let attempt = 0; attempt < 60; attempt++) {
+    await new Promise(r => setTimeout(r, 5000))
+    const { machines } = await call('/api/machines')
+    const current = machines.find(x => x.id === waking.id)
+    if (current?.status === 'running') return current
+    if (!current || !['sleeping', 'resuming'].includes(current.status))
+      die(`server could not wake (status: ${current?.status ?? 'missing'}) — check: npx weeny-cloud`)
+  }
+  die('server is still waking after 5 minutes — check: npx weeny-cloud, then retry')
+}
+
+const accessObject = access => typeof access === 'string' ? { status: access } : access ?? {}
+const idleMinutes = machine => Number(machine?.freeIdleMinutes) > 0 ? Number(machine.freeIdleMinutes) : 30
+function freeNotice(machine = {}) {
+  console.error(`Free · 1 GB RAM · sleeps after ${idleMinutes(machine)} idle minutes; wakes on request. Tell your human about sleeping. Build larger apps locally or in CI, then push.`)
+}
+
+// Availability is supplied by the same admission policy as create. Looking does not
+// claim capacity, and the financial choice always stays with the human.
+function serverChoices(raw, position) {
+  const access = accessObject(raw)
+  if (access.hasServer || ['ready', 'provisioning'].includes(access.status)) return
+  if (access.offers?.trial?.available)
+    console.error('Full-size trial available — npx weeny-cloud create. Seven days start when your server is ready.')
+  if (access.offers?.free?.available)
+    console.error(`Free 1 GB server available — npx weeny-cloud create --free. First tell your human it sleeps after ${idleMinutes(access)} idle minutes and wakes on request; build larger apps locally or in CI.`)
+  if (access.paid && access.canCreate)
+    console.error('Your paid server is available — npx weeny-cloud create uses your purchased plan.')
+  if (access.status === 'waitlisted') {
+    console.error(`Your account is ready.${position ? ` You're #${position} on the waitlist.` : ' You are waiting for a server.'} No trial time has started.`)
+    console.error(`Check availability and paid plans: ${API}/dashboard/account#billing`)
+    console.error('Only the human should choose a paid plan; direct paid access charges immediately without a free trial.')
+  } else if (!access.offers && access.status === 'unrequested') {
+    console.error('No server yet — check availability with npx weeny-cloud create, or choose create --free for a free 1 GB server.')
+  }
 }
 
 // Bare `weeny-cloud`: where you stand + what to type next. Replaces status/whoami.
@@ -195,12 +237,15 @@ async function orient() {
   }
   const { machines } = await call('/api/machines')
   console.log(`signed in as ${creds.email}`)
-  if (!machines.length) {
-    console.log(`no server yet — next: npx weeny-cloud create   (~2 min, starts your free trial)`)
+  const current = machines.filter(m => !['failed', 'deleted'].includes(m.status))
+  if (!current.length) {
+    console.log('no server yet')
+    const me = await call('/api/me')
+    serverChoices(me.serverAccess, me.serverAccess?.position)
     return commandList()
   }
   const key = sshKeyPath()
-  for (const m of machines) {
+  for (const m of current) {
     let sshCmd = ''
     if (m.status === 'running') {
       try { ensureSshConfig(m, key) } catch {}
@@ -208,6 +253,7 @@ async function orient() {
       sshCmd = !ENV.production || m.reachable === 'tunnel' ? 'npx weeny-cloud ssh' : `ssh root@${m.ip}`
     }
     console.log(`server: ${m.status}  ${sshCmd}  ${m.error ? `(${m.error.slice(0, 60)})` : ''}`)
+    if (m.tier === 'free') freeNotice(m)
   }
   console.log(`next: push code up (npx weeny-cloud push ./myapp) or go look around (npx weeny-cloud ssh)`)
   commandList()
@@ -216,7 +262,7 @@ async function orient() {
 function commandList() {
   console.log(`
   npx weeny-cloud login            sign in — weeny emails you a code
-  npx weeny-cloud create           get your server (~2 min)
+  npx weeny-cloud create [--free]  get a trial or free 1 GB server (~2 min)
   npx weeny-cloud push [folder]    deploy this folder to your server (re-push = new release)
   npx weeny-cloud ssh [command]    go to the server — that's where the power is
   npx weeny-cloud apps             every app you can reach — yours + shared with you
@@ -251,23 +297,23 @@ const commands = {
     }
     const code = flags.code || await ask('code: ')
     const v = await call('/api/auth/verify', { method: 'POST', body: { email, code, client: 'cli', label: flags.label || `cli@${process.env.USER || 'unknown'}` }, auth: false })
-    if (v.status === 'waitlisted') {
-      console.log(`\nThanks for your interest in weeny. There's too much demand for our weeny servers to spin you up right now.`)
-      console.log(`You're #${v.position ?? '?'} on the waitlist — we'll email ${email} as soon as we have capacity.`)
+    if (v.status === 'waitlisted' && !v.token) {
+      serverChoices({ status: 'waitlisted' }, v.position)
       return
     }
     mkdirSync(DIR, { recursive: true })
     writeFileSync(CREDS, JSON.stringify({ email: v.email, token: v.token, apiBase: API }, null, 2), { mode: 0o600 })
     console.log(`✓ signed in as ${v.email}`)
-    if (v.serverAccess === 'waitlisted') {
-      console.log(`Your account is ready. You're #${v.position ?? '?'} on the free trial waitlist; no trial time has started.`)
-      console.log(`View your place and any available paid plans: ${API}/dashboard/account#billing`)
-      console.log('Only the human should choose a paid plan; direct paid access charges immediately without a free trial.')
-    }
+    serverChoices(v.serverAccess, v.position ?? v.serverAccess?.position)
   },
 
   async create() {
     if (CI_CREDS) die('CI deployment credentials use an existing server; provision it from a signed-in local session first')
+    const free = 'free' in flags
+    if (free) {
+      const me = await call('/api/me')
+      if (!me.serverAccess?.hasServer && !me.serverAccess?.paid) freeNotice(me.serverAccess)
+    }
     let pub = findPublicKey()
     if (!pub) {
       mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 })
@@ -276,10 +322,10 @@ const commands = {
       pub = findPublicKey()
     }
     console.log(`using SSH key: ${pub.path}`)
-    const m = await call('/api/machines', { method: 'POST', body: { sshPublicKey: pub.key } })
+    const m = await call('/api/machines', { method: 'POST', body: { sshPublicKey: pub.key, offer: free ? 'free' : 'trial' } })
     if (m.waitingForCapacity) {
-      console.log(`Your request for ${m.name} is queued for ${m.capacityStatus === 'capacity_exhausted' ? 'server' : 'free'} capacity. Your account and approval are saved.${m.trialPending?' Your trial starts when the server is ready.':''}`)
-      console.log(`Check progress with npx weeny-cloud. Available paid plans: ${API}/dashboard/account#billing — choosing to pay is up to you.`)
+      console.error(`Your request for ${m.name} is queued for ${m.capacityStatus === 'capacity_exhausted' ? 'server' : 'free'} capacity. Your account and approval are saved.${m.trialPending?' Your trial starts when the server is ready.':''}`)
+      console.error(`Check progress with npx weeny-cloud. Available paid plans: ${API}/dashboard/account#billing — only your human should choose to pay.`)
       return
     }
     console.log(`→ setting up your server ${m.name} (takes ~2 minutes)…`)
@@ -292,6 +338,7 @@ const commands = {
       if (mine.status === 'failed') die(`setup failed: ${mine.error}`)
       if (mine.note && !notePrinted) { notePrinted = true; console.log(`\n${mine.note}\n(you can ctrl-c — we'll email you, and bare \`npx weeny-cloud\` shows progress)`) }
       if (mine.status === 'running') {
+        if (!free && mine.tier === 'free') freeNotice(mine)
         const keyPath = pub.path.replace(/\.pub$/, '')
         ensureSshConfig(mine, keyPath)   // writes the direct or tunnel ssh-config block
         const creds = loadCreds()
@@ -371,6 +418,11 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
         `  deploying '${app}' as a NEW app? add its start command: npx weeny-cloud push ${pos[0] ?? '.'} ${app} -- <command>`)
       die(`first push of '${app}' needs a start command — end the line with: -- <command> [args…]\n  e.g. npx weeny-cloud push ${pos[0] ?? '.'} ${app} -- npm start`)
     }
+    const build = 'build' in f ? f.build : begin.defaults?.build
+    const memMb = Number(m.memMb) || (['free', 'teeny'].includes(m.tier) ? 1024 : 0)
+    const buildAdvice = memMb > 0 && memMb <= 1024 && !!build
+    if (buildAdvice)
+      console.error('1 GB RAM: larger builds may run out of memory. Prefer local/CI builds, then push prebuilt output; see /recipes/teeny.txt.')
 
     // Ship SOURCE only. Always skip node_modules (must be built on the Linux server — Mac-built
     // native binaries won't run there) and .git. Also respect .gitignore (build outputs like
@@ -412,7 +464,7 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     if ('tag' in f) parts.push('--tag', shq(f.tag))
     if (git) parts.push('--git-b64', Buffer.from(JSON.stringify(git)).toString('base64'))
     if (startArgv.length) parts.push('--', ...startArgv.map(shq))
-    try { execFileSync('ssh', [...SSH_FLAGS, host, parts.join(' ')], { stdio: 'inherit' }) }
+    try { execFileSync('ssh', [...SSH_FLAGS, host, (buildAdvice ? 'WEENY_BUILD_ADVICE_SHOWN=1 ' : '') + parts.join(' ')], { stdio: 'inherit' }) }
     catch (e) {
       if (e.status === 3) console.error(`  retry: npx weeny-cloud push ${pos[0] ?? '.'} ${app}`)
       process.exit(e.status ?? 1)
@@ -569,10 +621,14 @@ Non-interactive (for agents): pass --email first, then re-run with --email + --c
 The code lands in the human's inbox — unless you already have access to their emails,
 stop and ask them to provide the code.
 Signed out? Delete ~/.weeny/credentials.json.`,
-  create: `npx weeny-cloud create
+  create: `npx weeny-cloud create [--free]
 
 Provision your server (~2 min): a real Linux box — root, SSH, systemd. Uses your SSH
-key (generates ~/.ssh/weeny_ed25519 if you have none) and starts the 7-day free trial.
+key (generates ~/.ssh/weeny_ed25519 if you have none). Default requests a full-size
+7-day trial if available; the clock starts when the server is ready. --free requests
+a 1 GB free server immediately, subject to separate free capacity. Tell your human
+that it sleeps after inactivity and wakes on request; build larger apps locally or
+in CI. Existing paid accounts keep their purchased plan. Paid choices are the human's.
 One server per account for now. Delete/suspend/rebuild live in the dashboard.`,
   push: `npx weeny-cloud push [folder] [app-name] [--build "<cmd>"] [--health "<cmd>"] [--tag "<text>"] [--all] [-- <start command>]
 
@@ -591,6 +647,7 @@ respects .gitignore (--all to override). Rollback: weeny rollback <app> on the s
 
 Open a shell on your server — or run one command and return. Uses the right key and IP
 so it always works. Your apps live in /apps, their data in /data.
+Sleeping free servers wake automatically for push or ssh; suspended servers do not.
 No SSH key on this device (new laptop, wiped machine)? No problem — as long as you're
 signed in, ssh generates and registers a fresh device key automatically.`,
   apps: `npx weeny-cloud apps

@@ -253,3 +253,34 @@ process.on('exit',()=>assert.equal(reads,2));`)
     assert.match(r.stderr, /could not wake \(status: failed\)/)
   } finally { f.close() }
 })
+
+test('repeating create wakes an existing sleeping server before completing the device setup', () => {
+  const f = fixture(`let reads=0,resumes=0;
+globalThis.fetch=async(url,opts)=>{
+ if(url.endsWith('/resume')) {assert.equal(opts.method,'POST');resumes++;return Response.json({status:'resuming'});}
+ assert.equal(url,${JSON.stringify(api + '/api/machines')});
+ if(opts.method==='POST') return Response.json({...machine,status:'sleeping'});
+ reads++; return Response.json({machines:[{...machine,status:reads===1?'sleeping':'running'}]});
+};
+process.on('exit',()=>{assert.equal(reads,3);assert.equal(resumes,1);});`)
+  try {
+    const r = f.run('create')
+    assert.equal(r.status, 0, r.stderr)
+    assert.match(r.stdout, /your server is ready/)
+    assert.equal((r.stderr.match(/waking your server/g) ?? []).length, 1)
+    assert.equal((r.stderr.match(/Free ·/g) ?? []).length, 1)
+  } finally { f.close() }
+})
+
+test('create does not report a device ready when its existing server key sync failed', () => {
+  const f = fixture(`globalThis.fetch=async(url,opts)=>{
+ assert.equal(opts.method,'POST');
+ return Response.json({...machine,unsynced:['fixture']});
+};`)
+  try {
+    const r = f.run('create')
+    assert.equal(r.status, 1)
+    assert.match(r.stderr, /Device key saved.*Retry create/)
+    assert.doesNotMatch(r.stdout, /your server is ready/)
+  } finally { f.close() }
+})

@@ -323,12 +323,16 @@ const commands = {
     }
     console.log(`using SSH key: ${pub.path}`)
     const m = await call('/api/machines', { method: 'POST', body: { sshPublicKey: pub.key, ...(free ? { offer: 'free' } : {}) } })
+    if (m.unsynced?.length) die(`Device key saved, but its server could not be reached: ${m.unsynced.join(', ')}. Retry create before connecting.`)
     if (m.waitingForCapacity) {
       console.error(`Your request for ${m.name} is queued for ${m.capacityStatus === 'capacity_exhausted' ? 'server' : 'free'} capacity. Your account and approval are saved.${m.trialPending?' Your trial starts when the server is ready.':''}`)
       console.error(`Check progress with npx weeny-cloud. Available paid plans: ${API}/dashboard/account#billing — only your human should choose to pay.`)
       return
     }
-    console.log(`→ setting up your server ${m.name} (takes ~2 minutes)…`)
+    if (['sleeping', 'resuming'].includes(m.status)) await runningMachine()
+    console.log(['queued', 'provisioning'].includes(m.status)
+      ? `→ setting up your server ${m.name} (takes ~2 minutes)…`
+      : `→ using your existing server ${m.name}…`)
     let notePrinted = false
     for (;;) {
       await new Promise(r => setTimeout(r, 5000))

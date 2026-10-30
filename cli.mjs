@@ -507,7 +507,7 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     const ws = new WebSocket(`wss://${m.sshHostname}`, { headers: { Authorization: m.tunnelSecret } })
     ws.binaryType = 'nodebuffer'
     const bail = (msg, code = 1) => { if (msg) process.stderr.write(`weeny: ${msg}\n`); try { ws.terminate() } catch {}; process.exit(code) }
-    ws.on('unexpected-response', (_r, res) => bail(res.statusCode === 401 ? 'tunnel auth rejected' : `tunnel HTTP ${res.statusCode} (re-establishing? retry in ~15s)`))
+    ws.on('unexpected-response', (_r, res) => bail(res.statusCode === 401 ? 'tunnel auth rejected' : `tunnel HTTP ${res.statusCode} — SSH session did not open; command did not run`))
     ws.on('error', (e) => bail(e.message))
     ws.on('open', () => {
       process.stdin.on('data', (chunk) => {

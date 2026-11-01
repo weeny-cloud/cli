@@ -39,11 +39,13 @@ Everything else is bare Linux — you have root. Apps are systemd units named
 Docs for agents: https://weeny.cloud/llms.txt
 
 Once you have the skill installed, normal CLI commands check its SHA-256 against
-the hosted guide in the background, at most once every 24 hours. A later command
-shows a notice on stderr only when an update is available, at most daily. Run
-`npx weeny-cloud@latest skill` to refresh, then have your agent re-read the file.
-The check never overwrites your skill or updates the server CLI, and offline checks
-do not delay or fail commands. CI and internal SSH relay processes skip the check.
+the hosted guide before running, at most once every 24 hours, with a three-second
+timeout. That invocation shows a notice on stderr only when an update is available,
+at most daily. Run `npx weeny-cloud@latest skill` to refresh, then have your agent
+re-read the file.
+The check never overwrites your skill or updates the server CLI. Failed or timed-out
+checks stay silent and let the command continue; later commands use the daily cache.
+CI and internal SSH relay processes skip the check.
 Existing installs are detected without reinstalling the skill; this feature requires
 an updated laptop CLI.
 

@@ -683,7 +683,8 @@ Bare = list. --revoke <id> removes a key from your account and your server.
 Install the weeny skill into ~/.claude/skills so Claude Code knows the whole flow:
 push code, start apps, expose URLs, env vars, domains, private links.
 Run again to refresh the guide, then re-read it in your agent. This does not update
-the server CLI. Normal commands check for guide updates in the background daily.`,
+the server CLI. Normal commands check for guide updates before running, at most
+daily, with a three-second timeout. Offline checks do not fail the command.`,
   tier: `npx weeny-cloud tier [teeny|weeny|meany]
 
 The plans. Bare = see them (specs, prices, which one you're on). With a name = change
@@ -694,7 +695,7 @@ server is tight on memory (\`weeny health\` on the box), tell them and point the
 
 const cmd = process.argv[2]
 // Never put notices or optional work in CI, the explicit installer, or SSH's byte relay.
-if (!process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) maybeCheckSkillUpdate(ENV, SELF)
+if (!process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) await maybeCheckSkillUpdate(ENV, SELF)
 const SERVER_WORDS = new Set(['deploy', 'start', 'stop', 'restart', 'releases', 'rollback', 'deployments', 'inspect', 'expose', 'unexpose', 'remove', 'env', 'domain', 'allow', 'revoke', 'health'])
 const OLD_TO_NEW = { run: 'deploy', rm: 'remove', list: '', ls: '', access: 'allow', guide: 'help' }
 const LINUX_HINT = { logs: 'journalctl -u weeny-APP -f' }

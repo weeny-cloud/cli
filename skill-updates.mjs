@@ -1,11 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync, writeFileSync, mkdirSync, renameSync, rmSync, rmdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
-import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 
-const SELF = fileURLToPath(import.meta.url)
 const DAY = 24 * 60 * 60 * 1000
 const hash = text => createHash('sha256').update(text).digest('hex')
 const quote = value => `'${String(value).replace(/'/g, `'\\''`)}'`
@@ -75,25 +72,12 @@ export async function installSkill(env, cliPath, { home, fetchImpl = fetch, now 
   return opts.skill
 }
 
-// Runs only in a detached helper. Its result is shown on a later CLI invocation.
-export async function checkSkillUpdate(opts, { fetchImpl = fetch } = {}) {
-  try {
-    const source = await fetchSkill(opts, fetchImpl, 3000)
-    const state = readState(opts)
-    // An explicit refresh may have completed while this older request was in flight.
-    if (state.checkId !== opts.checkId) return
-    save(opts.cache, { ...state, api: opts.api, renderer: opts.renderer,
-      latestHash: hash(renderSkill(source, opts, opts.cliPath)), latestSourceHash: hash(source) })
-  } catch {} // Offline, invalid responses and permission errors never affect CLI commands.
-  finally { try { rmdirSync(opts.lock) } catch {} }
-}
-
-export function maybeCheckSkillUpdate(env, cliPath, { home, now = Date.now(), notify = console.error, spawnImpl = spawn } = {}) {
+export async function maybeCheckSkillUpdate(env, cliPath, { home, now = Date.now(), notify = console.error, fetchImpl = fetch } = {}) {
   const opts = options(env, cliPath, home)
-  let locked = false, handedOff = false
+  let locked = false
   try {
-    // Legacy installs have no metadata: compare their actual bytes with the fetched guide.
-    const installedHash = hash(readFileSync(opts.skill))
+    // Missing skills do not need a check or a profile directory.
+    readFileSync(opts.skill)
     mkdirSync(env.dir, { recursive: true, mode: 0o700 })
     try { mkdirSync(opts.lock) }
     catch (error) {
@@ -102,7 +86,24 @@ export function maybeCheckSkillUpdate(env, cliPath, { home, now = Date.now(), no
     }
     locked = true
     // Read under the lock so concurrent commands cannot duplicate requests or notices.
-    const state = readState(opts)
+    let state = readState(opts)
+    if (!Number.isFinite(state.checkedAt) || now < state.checkedAt || now - state.checkedAt >= DAY) {
+      // Claim the daily attempt before fetching, including failed/offline attempts.
+      const checkId = randomUUID()
+      state = { ...state, api: opts.api, renderer: opts.renderer, checkedAt: now, checkId }
+      save(opts.cache, state)
+      let source
+      try { source = await fetchSkill(env, fetchImpl, 3000) } catch {}
+      state = readState(opts)
+      // An explicit refresh may have completed while this older request was in flight.
+      if (state.checkId !== checkId) return
+      if (source) {
+        state = { ...state, latestHash: hash(renderSkill(source, env, cliPath)), latestSourceHash: hash(source) }
+        save(opts.cache, state)
+      }
+    }
+    // Legacy installs have no metadata: compare their actual bytes with the fetched guide.
+    const installedHash = hash(readFileSync(opts.skill))
     const differs = state.latestHash && installedHash !== state.latestHash
       && (!state.sourceHash || state.sourceHash !== state.latestSourceHash)
     const notifiedAt = Number.isFinite(state.notifiedAt) && state.notifiedAt <= now ? state.notifiedAt : 0
@@ -111,18 +112,6 @@ export function maybeCheckSkillUpdate(env, cliPath, { home, now = Date.now(), no
       save(opts.cache, state)
       notify(`Weeny guide update available — run ${skillCommand(env, cliPath)} skill, then re-read ${opts.skill}. This updates the guide, not the server CLI.`)
     }
-    if (Number.isFinite(state.checkedAt) && now >= state.checkedAt && now - state.checkedAt < DAY) return
-    // Claim the daily attempt before spawning, including failed/offline attempts.
-    opts.checkId = randomUUID()
-    save(opts.cache, { ...state, api: opts.api, renderer: opts.renderer, checkedAt: now, checkId: opts.checkId })
-    const child = spawnImpl(process.execPath, [SELF, '_check', JSON.stringify(opts)], { detached: true, stdio: 'ignore', windowsHide: true })
-    child.on('error', () => { try { rmdirSync(opts.lock) } catch {} })
-    child.unref()
-    handedOff = true
   } catch {} // Missing skills, read-only profiles and corrupt caches stay quiet.
-  finally { if (locked && !handedOff) { try { rmdirSync(opts.lock) } catch {} } }
-}
-
-if (process.argv[1] && resolve(process.argv[1]) === SELF && process.argv[2] === '_check') {
-  try { await checkSkillUpdate(JSON.parse(process.argv[3])) } catch {}
+  finally { if (locked) { try { rmdirSync(opts.lock) } catch {} } }
 }

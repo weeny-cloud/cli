@@ -13,7 +13,7 @@ const source = '---\nname: weeny\ndescription: Deploy apps\n---\nCurrent guide: 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 async function until(fn) {
   const deadline = Date.now() + 5000
-  while (!fn()) { assert.ok(Date.now() < deadline, 'background helper did not finish'); await pause(20) }
+  while (!fn()) { assert.ok(Date.now() < deadline, 'request did not arrive'); await pause(20) }
 }
 function run(env, args, extra = []) {
   return new Promise((resolve, reject) => {
@@ -24,7 +24,7 @@ function run(env, args, extra = []) {
   })
 }
 
-test('real CLI returns before a stalled update request, notices later, and refreshes explicitly', { timeout: 15000 }, async t => {
+test('real CLI waits for the daily check, notices on the first invocation, and refreshes explicitly', { timeout: 15000 }, async t => {
   const dir = mkdtempSync(join(tmpdir(), 'weeny-skill-cli-'))
   const server = createServer()
   let firstResponse, requests = 0
@@ -42,17 +42,18 @@ test('real CLI returns before a stalled update request, notices later, and refre
   writeFileSync(path, renderSkill(source.replace('Current', 'Older'), { api, dir: profile, production: false }, cli))
   const env = { ...process.env, WEENY_ENV: 'staging', WEENY_API: api, WEENY_CONFIG_DIR: profile }
   for (const key of ['CI', 'WEENY_TOKEN', 'WEENY_SSH_KEY_FILE', 'WEENY_KNOWN_HOSTS_FILE']) delete env[key]
-  // The HTTP response remains deliberately blocked until the foreground has exited.
-  const first = await run(env, ['help', 'skill'])
-  assert.equal(first.status, 0, first.stderr); assert.doesNotMatch(first.stderr, /guide update available/)
+  let exited = false
+  const running = run(env, ['help', 'skill']).then(result => { exited = true; return result })
   await until(() => firstResponse)
+  await pause(50)
+  assert.equal(exited, false, 'command must wait for the daily check')
   firstResponse.end(source)
-  await until(() => {
-    try { return JSON.parse(readFileSync(cache)).latestHash && !existsSync(join(profile, 'skill-update.lock')) } catch { return false }
-  })
+  const first = await running
+  assert.equal(first.status, 0, first.stderr); assert.match(first.stderr, /guide update available/)
+  assert.equal(existsSync(join(profile, 'skill-update.lock')), false)
   const second = await run(env, ['help', 'skill'])
   assert.equal(second.status, 0); assert.equal(second.stdout, first.stdout)
-  assert.match(second.stderr, /guide update available/)
+  assert.doesNotMatch(second.stderr, /guide update available/)
   assert.doesNotMatch(second.stdout, /guide update available/)
   const third = await run(env, ['help', 'skill'])
   assert.doesNotMatch(third.stderr, /guide update available/); assert.equal(requests, 1)
@@ -72,4 +73,30 @@ test('real CLI returns before a stalled update request, notices later, and refre
   writeFileSync(preload, 'globalThis.fetch = async () => Response.json({machines: []})')
   assert.equal((await run(env, ['_relay', 'fixture'], ['--import', preload])).status, 1)
   assert.equal(existsSync(cache), false); assert.equal(requests, 2)
+})
+
+test('a stalled response body times out and the command continues with daily backoff', { timeout: 10000 }, async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'weeny-skill-timeout-'))
+  let requests = 0
+  const server = createServer((_req, res) => {
+    requests++
+    res.writeHead(200, { 'Content-Type': 'text/plain' })
+    res.write('---\nname: weeny\n') // Headers arrive, but the guide never finishes.
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => { server.closeAllConnections(); server.close(); rmSync(dir, { recursive: true, force: true }) })
+  const api = `http://127.0.0.1:${server.address().port}`, profile = join(dir, 'profile')
+  const path = join(profile, 'skills', 'weeny', 'SKILL.md')
+  mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, source)
+  const env = { ...process.env, WEENY_ENV: 'staging', WEENY_API: api, WEENY_CONFIG_DIR: profile }
+  for (const key of ['CI', 'WEENY_TOKEN', 'WEENY_SSH_KEY_FILE', 'WEENY_KNOWN_HOSTS_FILE']) delete env[key]
+  const start = Date.now(), result = await run(env, ['help', 'skill']), elapsed = Date.now() - start
+  assert.equal(result.status, 0, result.stderr)
+  assert.ok(elapsed >= 2500 && elapsed < 6000, `expected the three-second deadline, got ${elapsed}ms`)
+  assert.doesNotMatch(result.stderr, /TimeoutError|AbortError|guide update available/)
+  assert.match(result.stdout, /Install the weeny skill/)
+  assert.equal(existsSync(join(profile, 'skill-update.lock')), false)
+  const retry = await run(env, ['help', 'skill'])
+  assert.equal(retry.status, 0); assert.equal(requests, 1)
+  assert.equal(readFileSync(path, 'utf8'), source)
 })

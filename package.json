@@ -26,6 +26,7 @@
     "cli.mjs",
     "feedback.mjs",
     "environment.mjs",
+    "skill-updates.mjs",
     "README.md",
     "examples/github-actions.yml"
   ],

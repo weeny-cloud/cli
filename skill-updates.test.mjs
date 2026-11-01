@@ -95,14 +95,19 @@ test('local customizations alone do not trigger a notice or get overwritten', as
   assert.match(readFileSync(f.path, 'utf8'), /My local notes/)
 })
 
-test('a refresh wins over an older update check still in flight', async t => {
+test('a refresh serializes its guide and cache commit after an in-flight check', async t => {
   const f = fixture(t); f.writeSkill(old)
   let respond
   const notices = []
   const checking = maybeCheckSkillUpdate(f.env, f.cli, { home: f.home,
     fetchImpl: () => new Promise(resolve => { respond = resolve }), notify: text => notices.push(text) })
-  await installSkill(f.env, f.cli, { home: f.home, fetchImpl: async () => new Response(latest) })
-  respond(new Response(old)); await checking
+  let refreshed = false
+  const refreshing = installSkill(f.env, f.cli, { home: f.home, fetchImpl: async () => new Response(latest) })
+    .then(() => { refreshed = true })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(refreshed, false, 'refresh must wait for the check lock')
+  assert.equal(readFileSync(f.path, 'utf8'), renderSkill(old, f.env, f.cli))
+  respond(new Response(old)); await checking; await refreshing
   assert.equal(f.state().latestSourceHash, hash(latest))
   assert.equal(f.state().installedHash, hash(readFileSync(f.path)))
   assert.equal(notices.length, 0)

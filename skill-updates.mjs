@@ -61,14 +61,39 @@ function readState(opts) {
   return state?.api === opts.api && state.renderer === opts.renderer ? state : {}
 }
 
+function tryLock(opts, now = Date.now()) {
+  mkdirSync(opts.dir, { recursive: true, mode: 0o700 })
+  try { mkdirSync(opts.lock); return true }
+  catch (error) {
+    if (error.code !== 'EEXIST') throw error
+    if (now - statSync(opts.lock).mtimeMs < 60000) return false
+    rmdirSync(opts.lock)
+    try { mkdirSync(opts.lock); return true }
+    catch (retry) { if (retry.code === 'EEXIST') return false; throw retry }
+  }
+}
+
+async function lockForInstall(opts) {
+  const deadline = Date.now() + 5000
+  while (!tryLock(opts)) {
+    if (Date.now() >= deadline) throw Object.assign(new Error('another skill operation is still running; retry the skill command'), { code: 'EBUSY' })
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+}
+
 export async function installSkill(env, cliPath, { home, fetchImpl = fetch, now = Date.now() } = {}) {
   const opts = options(env, cliPath, home)
   const source = await fetchSkill(env, fetchImpl, 10000)
   const skill = renderSkill(source, env, cliPath), installedHash = hash(skill), sourceHash = hash(source)
-  atomicWrite(opts.skill, skill, 0o644)
-  // The guide is usable even if the optional update cache is unwritable.
-  try { save(opts.cache, { api: opts.api, renderer: opts.renderer, installedAt: now, installedHash, sourceHash,
-    latestHash: installedHash, latestSourceHash: sourceHash, checkedAt: now, notifiedAt: 0 }) } catch {}
+  let locked = false
+  try {
+    try { await lockForInstall(opts); locked = true }
+    catch (error) { if (!['EACCES', 'EPERM', 'EROFS'].includes(error.code)) throw error }
+    atomicWrite(opts.skill, skill, 0o644)
+    // Cache commits share the check's lock. An unwritable cache never prevents installation.
+    if (locked) try { save(opts.cache, { api: opts.api, renderer: opts.renderer, installedAt: now, installedHash, sourceHash,
+      latestHash: installedHash, latestSourceHash: sourceHash, checkedAt: now, notifiedAt: 0 }) } catch {}
+  } finally { if (locked) { try { rmdirSync(opts.lock) } catch {} } }
   return opts.skill
 }
 
@@ -78,13 +103,8 @@ export async function maybeCheckSkillUpdate(env, cliPath, { home, now = Date.now
   try {
     // Missing skills do not need a check or a profile directory.
     readFileSync(opts.skill)
-    mkdirSync(env.dir, { recursive: true, mode: 0o700 })
-    try { mkdirSync(opts.lock) }
-    catch (error) {
-      if (error.code !== 'EEXIST' || now - statSync(opts.lock).mtimeMs < 60000) return
-      rmdirSync(opts.lock); mkdirSync(opts.lock)
-    }
-    locked = true
+    locked = tryLock(opts, now)
+    if (!locked) return
     // Read under the lock so concurrent commands cannot duplicate requests or notices.
     let state = readState(opts)
     if (!Number.isFinite(state.checkedAt) || now < state.checkedAt || now - state.checkedAt >= DAY) {
@@ -95,7 +115,7 @@ export async function maybeCheckSkillUpdate(env, cliPath, { home, now = Date.now
       let source
       try { source = await fetchSkill(env, fetchImpl, 3000) } catch {}
       state = readState(opts)
-      // An explicit refresh may have completed while this older request was in flight.
+      // Discard the result if this profile's state was replaced while fetching.
       if (state.checkId !== checkId) return
       if (source) {
         state = { ...state, latestHash: hash(renderSkill(source, env, cliPath)), latestSourceHash: hash(source) }

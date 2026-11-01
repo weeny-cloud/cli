@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { readFileSync, writeFileSync, mkdirSync, renameSync, rmSync, rmdirSync, statSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { trySkillLock, releaseSkillLock } from './skill-lock.mjs'
 
 const DAY = 24 * 60 * 60 * 1000
 const hash = text => createHash('sha256').update(text).digest('hex')
@@ -53,29 +54,19 @@ async function fetchSkill(env, fetchImpl, timeoutMs) {
 }
 
 function options(env, cliPath, home) {
-  return { ...env, cliPath, skill: skillPath(env, home), cache: join(env.dir, 'skill-update.json'),
-    lock: join(env.dir, 'skill-update.lock'), renderer: env.production ? 'production' : cliPath }
+  return { ...env, skill: skillPath(env, home), cache: join(env.dir, 'skill-update.json'),
+    renderer: env.production ? 'production' : cliPath }
 }
 function readState(opts) {
   const state = readJson(opts.cache)
   return state?.api === opts.api && state.renderer === opts.renderer ? state : {}
 }
 
-function tryLock(opts, now = Date.now()) {
-  mkdirSync(opts.dir, { recursive: true, mode: 0o700 })
-  try { mkdirSync(opts.lock); return true }
-  catch (error) {
-    if (error.code !== 'EEXIST') throw error
-    if (now - statSync(opts.lock).mtimeMs < 60000) return false
-    rmdirSync(opts.lock)
-    try { mkdirSync(opts.lock); return true }
-    catch (retry) { if (retry.code === 'EEXIST') return false; throw retry }
-  }
-}
-
 async function lockForInstall(opts) {
   const deadline = Date.now() + 5000
-  while (!tryLock(opts)) {
+  while (true) {
+    const lock = trySkillLock(opts.dir)
+    if (lock) return lock
     if (Date.now() >= deadline) throw Object.assign(new Error('another skill operation is still running; retry the skill command'), { code: 'EBUSY' })
     await new Promise(resolve => setTimeout(resolve, 25))
   }
@@ -85,26 +76,26 @@ export async function installSkill(env, cliPath, { home, fetchImpl = fetch, now 
   const opts = options(env, cliPath, home)
   const source = await fetchSkill(env, fetchImpl, 10000)
   const skill = renderSkill(source, env, cliPath), installedHash = hash(skill), sourceHash = hash(source)
-  let locked = false
+  let lock
   try {
-    try { await lockForInstall(opts); locked = true }
+    try { lock = await lockForInstall(opts) }
     catch (error) { if (!['EACCES', 'EPERM', 'EROFS'].includes(error.code)) throw error }
     atomicWrite(opts.skill, skill, 0o644)
     // Cache commits share the check's lock. An unwritable cache never prevents installation.
-    if (locked) try { save(opts.cache, { api: opts.api, renderer: opts.renderer, installedAt: now, installedHash, sourceHash,
+    if (lock) try { save(opts.cache, { api: opts.api, renderer: opts.renderer, installedAt: now, installedHash, sourceHash,
       latestHash: installedHash, latestSourceHash: sourceHash, checkedAt: now, notifiedAt: 0 }) } catch {}
-  } finally { if (locked) { try { rmdirSync(opts.lock) } catch {} } }
+  } finally { releaseSkillLock(lock) }
   return opts.skill
 }
 
 export async function maybeCheckSkillUpdate(env, cliPath, { home, now = Date.now(), notify = console.error, fetchImpl = fetch } = {}) {
   const opts = options(env, cliPath, home)
-  let locked = false
+  let lock
   try {
     // Missing skills do not need a check or a profile directory.
     readFileSync(opts.skill)
-    locked = tryLock(opts, now)
-    if (!locked) return
+    lock = trySkillLock(opts.dir, { now })
+    if (!lock) return
     // Read under the lock so concurrent commands cannot duplicate requests or notices.
     let state = readState(opts)
     if (!Number.isFinite(state.checkedAt) || now < state.checkedAt || now - state.checkedAt >= DAY) {
@@ -133,5 +124,5 @@ export async function maybeCheckSkillUpdate(env, cliPath, { home, now = Date.now
       notify(`Weeny guide update available — run ${skillCommand(env, cliPath)} skill, then re-read ${opts.skill}. This updates the guide, not the server CLI.`)
     }
   } catch {} // Missing skills, read-only profiles and corrupt caches stay quiet.
-  finally { if (locked) { try { rmdirSync(opts.lock) } catch {} } }
+  finally { releaseSkillLock(lock) }
 }

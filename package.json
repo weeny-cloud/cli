@@ -26,6 +26,8 @@
     "cli.mjs",
     "feedback.mjs",
     "environment.mjs",
+    "skill-updates.mjs",
+    "skill-lock.mjs",
     "README.md",
     "examples/github-actions.yml"
   ],

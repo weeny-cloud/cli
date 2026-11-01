@@ -5,11 +5,11 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { execFileSync, execSync } from 'node:child_process'
 import { createInterface } from 'node:readline/promises'
-import { homedir } from 'node:os'
 import { join, resolve, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { feedbackHelp, runFeedback } from './feedback.mjs'
 import { cliEnvironment, credentialsForOrigin, credentialsFromEnv } from './environment.mjs'
+import { installSkill, maybeCheckSkillUpdate } from './skill-updates.mjs'
 
 const SELF = fileURLToPath(import.meta.url)   // absolute path to this cli.mjs (for ProxyCommand)
 
@@ -603,19 +603,10 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
   },
 
   async skill() {
-    const dir = ENV.production ? join(homedir(), '.claude', 'skills', 'weeny') : join(DIR, 'skills', 'weeny')
-    mkdirSync(dir, { recursive: true })
-    const res = await fetch(API + '/weeny-skill.md', ENV.production ? {} : { redirect: 'error' })
-    if (!res.ok) die('could not fetch the skill')
-    let skill = await res.text()
-    if (!ENV.production) {
-      const invoke = ['env', 'WEENY_ENV=staging', `WEENY_API=${API}`, `WEENY_CONFIG_DIR=${DIR}`, process.execPath, SELF].map(shellQuote).join(' ')
-      skill = skill.replaceAll('npx weeny-cloud', invoke)
-        .replaceAll('https://weeny.cloud', API)
-    }
-    writeFileSync(join(dir, 'SKILL.md'), skill)
-    if (!ENV.production) return console.log(`✓ staged skill → ${dir}/SKILL.md\nAsk your test agent to read this file. Your production agent skills were not changed.`)
-    console.log(`✓ installed the weeny skill → ${dir}/SKILL.md
+    let path
+    try { path = await installSkill(ENV, SELF) } catch (error) { die(error.message) }
+    if (!ENV.production) return console.log(`✓ staged skill → ${path}\nAsk your test agent to read this file. Your production agent skills were not changed.`)
+    console.log(`✓ installed the weeny skill → ${path}
 Your Claude Code now knows how to deploy to weeny. Try: "deploy this app to weeny".`)
   },
 
@@ -690,7 +681,10 @@ Bare = list. --revoke <id> removes a key from your account and your server.
   skill: `npx weeny-cloud skill
 
 Install the weeny skill into ~/.claude/skills so Claude Code knows the whole flow:
-push code, start apps, expose URLs, env vars, domains, private links.`,
+push code, start apps, expose URLs, env vars, domains, private links.
+Run again to refresh the guide, then re-read it in your agent. This does not update
+the server CLI. Normal commands check for guide updates before running, at most
+daily, with a three-second timeout. Offline checks do not fail the command.`,
   tier: `npx weeny-cloud tier [teeny|weeny|meany]
 
 The plans. Bare = see them (specs, prices, which one you're on). With a name = change
@@ -700,6 +694,8 @@ server is tight on memory (\`weeny health\` on the box), tell them and point the
 }
 
 const cmd = process.argv[2]
+// Never put notices or optional work in CI, the explicit installer, or SSH's byte relay.
+if (!process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) await maybeCheckSkillUpdate(ENV, SELF)
 const SERVER_WORDS = new Set(['deploy', 'start', 'stop', 'restart', 'releases', 'rollback', 'deployments', 'inspect', 'expose', 'unexpose', 'remove', 'env', 'domain', 'allow', 'revoke', 'health'])
 const OLD_TO_NEW = { run: 'deploy', rm: 'remove', list: '', ls: '', access: 'allow', guide: 'help' }
 const LINUX_HINT = { logs: 'journalctl -u weeny-APP -f' }

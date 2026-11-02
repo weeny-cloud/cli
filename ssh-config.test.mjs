@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
 const cli = fileURLToPath(new URL('./cli.mjs', import.meta.url))
@@ -40,7 +40,7 @@ globalThis.fetch = async url => { assert.equal(url,${JSON.stringify(api + '/api/
     writeFileSync(join(sshDir, 'config'), unsafe)
     writeFileSync(join(sshDir, 'ci-config'), unsafe)
   } else writeFileSync(join(profile, 'credentials.json'), JSON.stringify({ token: 'fixture-token', apiBase: api, keyPath: key }))
-  return { dir, profile, sshDir, key, hosts, run: () => spawnSync(process.execPath, ['--import', preload, cli, 'ssh', 'true'], { env, encoding: 'utf8', timeout: 10000 }) }
+  return { dir, profile, sshDir, key, hosts, run: () => spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, cli, 'ssh', 'true'], { env, encoding: 'utf8', timeout: 10000 }) }
 }
 
 for (const [name, options] of Object.entries({ 'staging direct': {}, 'production direct': { production: true }, 'production tunnel': { production: true, tunnel: true } })) {

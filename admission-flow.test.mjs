@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
 const cli = fileURLToPath(new URL('./cli.mjs', import.meta.url))
@@ -28,7 +28,7 @@ ${source}
   delete env.WEENY_TOKEN; delete env.WEENY_SSH_KEY_FILE; delete env.WEENY_KNOWN_HOSTS_FILE
   return {
     dir, profile,
-    run: (...args) => spawnSync(process.execPath, ['--import', preload, cli, ...args], { env, encoding: 'utf8', timeout: 10000 }),
+    run: (...args) => spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, cli, ...args], { env, encoding: 'utf8', timeout: 10000 }),
     close: () => rmSync(dir, { recursive: true, force: true }),
   }
 }

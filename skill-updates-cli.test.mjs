@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { renderSkill } from './skill-updates.mjs'
 
 const cli = fileURLToPath(new URL('./cli.mjs', import.meta.url))
@@ -71,7 +71,7 @@ test('real CLI waits for the daily check, notices on the first invocation, and r
   assert.equal(existsSync(cache), false)
   const preload = join(dir, 'relay.mjs')
   writeFileSync(preload, 'globalThis.fetch = async () => Response.json({machines: []})')
-  assert.equal((await run(env, ['_relay', 'fixture'], ['--import', preload])).status, 1)
+  assert.equal((await run(env, ['_relay', 'fixture'], ['--import', pathToFileURL(preload).href])).status, 1)
   assert.equal(existsSync(cache), false); assert.equal(requests, 2)
 })
 

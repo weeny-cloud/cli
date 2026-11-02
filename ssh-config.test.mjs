@@ -49,7 +49,7 @@ for (const [name, options] of Object.entries({ 'staging direct': {}, 'production
     try {
       const r = f.run()
       assert.equal(r.status, 0, r.stderr)
-      const lines = r.stdout.split('\n')
+      const lines = r.stdout.split(/\r?\n/)
       assert.ok(lines.includes('stricthostkeychecking true'), r.stdout)
       assert.ok(lines.includes('batchmode yes'))
       assert.ok(lines.includes('globalknownhostsfile /dev/null'))
@@ -66,7 +66,7 @@ test('interactive profiles also support credential paths with spaces, quotes and
   try {
     const r = f.run()
     assert.equal(r.status, 0, r.stderr)
-    const lines = r.stdout.split('\n')
+    const lines = r.stdout.split(/\r?\n/)
     assert.ok(lines.includes('identityfile ' + f.key), r.stdout)
     assert.ok(lines.includes('userknownhostsfile ' + f.hosts), r.stdout)
   } finally { rmSync(f.dir, { recursive: true, force: true }) }

@@ -238,7 +238,7 @@ test('bare CLI tells an existing paid account to create its purchased server', (
     const r = f.run()
     assert.equal(r.status, 0, r.stderr)
     assert.match(r.stderr, /create uses your purchased plan/)
-    assert.doesNotMatch(r.stderr, /Full-size trial available|Free ·|should choose a paid/)
+    assert.doesNotMatch(r.stderr, /Start free with 7 days at 4 GB|Free ·|should choose a paid/)
   } finally { f.close() }
 })
 
@@ -301,8 +301,8 @@ for (const trialAvailable of [false, true]) {
       assert.match(r.stderr, /Only the human should choose a paid plan/)
       assert.match(r.stderr, /charges immediately without a free trial/)
       assert.equal((r.stderr.match(/\/dashboard\/account#servers/g) ?? []).length, 1)
-      assert.ok(r.stderr.indexOf('Paid server available') < r.stderr.indexOf('Free 1 GB server available') || trialAvailable)
-      if (trialAvailable) assert.ok(r.stderr.indexOf('Full-size trial available') < r.stderr.indexOf('Paid server available'))
+      assert.ok(r.stderr.indexOf('Paid server available') < r.stderr.indexOf('Skip the trial — start at 1 GB') || trialAvailable)
+      if (trialAvailable) assert.ok(r.stderr.indexOf('Start free with 7 days at 4 GB') < r.stderr.indexOf('Paid server available'))
       assert.doesNotMatch(r.stdout, /paid plan|Paid server|\/dashboard\/account#/)
       assert.doesNotMatch(r.stderr, /dashboard\/account#billing/)
     } finally { f.close() }
@@ -317,7 +317,7 @@ test('an unavailable creation leads with available paid capacity and then offers
   try {
     const r = f.run('create')
     assert.equal(r.status, 1)
-    assert.ok(r.stderr.indexOf('Paid server available') < r.stderr.indexOf('Free 1 GB server available'))
+    assert.ok(r.stderr.indexOf('Paid server available') < r.stderr.indexOf('Skip the trial — start at 1 GB'))
     assert.match(r.stderr, /Only the human should choose a paid plan/)
     assert.equal((r.stderr.match(/\/dashboard\/account#servers/g) ?? []).length, 1)
     assert.doesNotMatch(r.stdout, /Paid server|\/dashboard\/account#/)

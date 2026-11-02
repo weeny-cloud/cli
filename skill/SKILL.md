@@ -11,7 +11,9 @@ description: >-
 weeny gives you a real, persistent Linux server (root, SSH, systemd) with a managed-app
 deployment primitive and public HTTPS URLs. No Docker, no framework, no config — a normal
 computer with a tiny CLI. Paid plans from $3/mo (founding); limited 1GB free servers
-and seven-day full-size trials. Trial days start when the server is ready.
+and seven-day 4GB trials that automatically continue on the forever-free 1GB plan.
+No card needed, no automatic charge; the same server keeps its apps and data.
+Trial days start when the server is ready.
 
 **Two CLIs, one job each:**
 - `npx weeny-cloud …` (laptop) gets code and people TO the server: login, create, push, ssh.
@@ -47,13 +49,20 @@ npx weeny-cloud login        # email → 6-digit code (ask the user to read it o
 npx weeny-cloud create       # ~2 min; prints the ssh command
 ```
 
-Login only verifies the account. Always relay the paid option alongside free offers,
+Login only verifies the account. When a trial is available, recommend starting free
+with seven days at 4GB using `create`: the same server automatically continues on
+the forever-free 1GB plan unless the human chooses a paid plan. No card is needed,
+there is no automatic charge, and apps and data stay. Explain that the free plan
+sleeps when idle. Respect an explicit choice to skip the trial.
+Always relay the paid option alongside free offers,
 especially when a free server or trial is unavailable: the human can buy an available
 server at https://weeny.cloud/dashboard/account#servers for always-on apps, custom
 domains and no badge. Direct paid checkout charges immediately, without a trial;
 the human chooses and completes payment. Never purchase automatically.
-`create --free` provisions an available 1GB free server. An unavailable creation saves
-the request for notification; it does not start a trial or reserve a server.
+`create --free` skips the trial and starts directly on an available 1GB free server;
+this account cannot start a trial later. Offer this when the human prefers it or
+when trials are unavailable. An unavailable creation saves the request for
+notification; it does not start a trial or reserve a server.
 On free, tell the human the server sleeps after the reported idle period and wakes
 on demand. On any 1GB server (free or teeny), prefer local/CI builds for larger apps;
 use the existing teeny recipe. Keep the normal push/ssh workflow.

@@ -51,10 +51,14 @@ an updated laptop CLI.
 
 ## Pricing
 
-flat plans from $3/mo (founding), no usage metering. 7-day free trial, no card needed.
-Login verifies the account without allocating compute. `create` requests an
-available full-size trial; `create --free` starts directly on the 1GB sleeping
-free plan. An unavailable creation saves a server request for notification.
+flat plans from $3/mo (founding), no usage metering. Start free with 7 days at 4GB,
+then the same server automatically continues on the forever-free 1GB plan.
+No card needed, no automatic charge; your apps and data stay.
+Login verifies the account without allocating compute. `create` requests this trial
+when available (recommended); the seven days start when the server is ready.
+`create --free` skips the trial and starts directly on the 1GB sleeping free plan;
+this account cannot start a trial later. An unavailable creation saves a server
+request for notification.
 
 ## Testing an unpublished release
 

@@ -67,6 +67,30 @@ separate SSH keys/config, known-hosts and skill files. The `skill` command fetch
 staging instructions and rewrites their CLI commands to invoke this exact candidate
 with the staging environment, without modifying your installed production skill.
 
+## Windows setup and SSH troubleshooting
+
+Use Node.js and the Windows **OpenSSH Client** optional feature from a normal user
+terminal. Weeny stores its account under your home directory's `.weeny` folder;
+it passes the generated SSH configuration explicitly, including for tunnel aliases.
+
+If profile creation fails with `EPERM` or `EACCES`, choose a private writable location
+in PowerShell, then repeat login:
+
+```powershell
+$env:WEENY_CONFIG_DIR = Join-Path $env:LOCALAPPDATA 'Weeny'
+npx weeny-cloud login
+```
+
+Keep that setting in later terminals; the override uses its own account and SSH
+files. It does not migrate or delete the old profile. Use another directory for
+staging. The CLI checks profile writes before requesting or consuming a login code.
+
+An SSH alias such as `weeny-<id>` is a local config entry, not a public DNS name.
+Use `npx weeny-cloud ssh`. If a separate `ssh` invocation fails to find the alias,
+`Get-Command ssh -All` identifies competing Windows/Git executables. Run
+`npx weeny-cloud help ssh` for the exact config path and an `ssh -G -F` diagnostic.
+Paths with spaces are supported; keep host checking enabled and preserve existing keys.
+
 ## Founder feedback
 
 Preview a short report with `npx weeny-cloud feedback --file feedback.md` (or pass

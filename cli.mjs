@@ -2,25 +2,31 @@
 // weeny-cloud — the weeny.cloud laptop CLI. Its whole job: get code and people TO
 // your server. (Apps are operated ON the server with the `weeny` command — ssh in.)
 // Agent-friendly by design: an agent can run every step except reading your inbox.
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { execFileSync, execSync } from 'node:child_process'
 import { createInterface } from 'node:readline/promises'
-import { join, resolve, basename } from 'node:path'
+import { join, resolve, basename, relative, isAbsolute, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { feedbackHelp, runFeedback } from './feedback.mjs'
 import { cliEnvironment, credentialsForOrigin, credentialsFromEnv } from './environment.mjs'
 import { installSkill, maybeCheckSkillUpdate } from './skill-updates.mjs'
+import { profileAccessError, profileDirectory, writeProfile, checkProfileWritable } from './profile.mjs'
+import { proxyCommand } from './ssh-command.mjs'
 
 const SELF = fileURLToPath(import.meta.url)   // absolute path to this cli.mjs (for ProxyCommand)
 
-const ENV = cliEnvironment()
+// Carry the selected API/profile as literal relay arguments, without a platform shell.
+// Older generated configs with only a machine ID still use their inherited environment.
+const relayApi = process.argv[2] === '_relay' && process.argv[4]
+const ENV = cliEnvironment(relayApi ? { ...process.env, WEENY_API: relayApi,
+  WEENY_CONFIG_DIR: process.argv[5], WEENY_ENV: relayApi === 'https://weeny.cloud' ? 'production' : 'staging' } : process.env)
 const CI_CREDS = credentialsFromEnv(process.env, ENV)
 const API = ENV.api
 const DIR = ENV.dir
 const SSH_DIR = ENV.sshDir
 // CI never inherits earlier Host/Match/Include rules from a user profile.
 const SSH_CONFIG = join(SSH_DIR, CI_CREDS ? 'ci-config' : 'config')
-const SSH_FLAGS = ENV.production && !process.env.WEENY_CONFIG_DIR && !CI_CREDS ? [] : ['-F', SSH_CONFIG]
+const SSH_FLAGS = ['-F', SSH_CONFIG]
 const shellQuote = v => `'${String(v).replace(/'/g, `'\\''`)}'`
 const SSH_COMMAND = ['ssh', ...SSH_FLAGS].map(shellQuote).join(' ')
 const CREDS = join(DIR, 'credentials.json')
@@ -31,7 +37,11 @@ const die = (msg) => { console.error(`✗ ${msg}`); process.exit(1) }
 function loadCreds() {
   if (CI_CREDS) return CI_CREDS
   let creds
-  try { creds = JSON.parse(readFileSync(CREDS, 'utf8')) } catch { return null }
+  try { creds = JSON.parse(readFileSync(CREDS, 'utf8')) } catch (error) {
+    const accessError = profileAccessError(error, CREDS)
+    if (accessError !== error) throw accessError
+    return null
+  }
   return credentialsForOrigin(creds, ENV)
 }
 
@@ -95,9 +105,8 @@ function ensureSshConfig(m, keyPath) {
   lines.push(`  IdentitiesOnly yes`, `  StrictHostKeyChecking ${CI_CREDS ? 'yes' : 'accept-new'}`, `  UserKnownHostsFile ${sshConfigPath(knownHosts)}`)
   if (CI_CREDS) lines.push('  GlobalKnownHostsFile /dev/null', '  BatchMode yes')
   if (tunnel) {
-    const relay = [process.execPath, SELF, '_relay', m.id]
-    if (!ENV.production) relay.unshift('env', 'WEENY_ENV=staging', `WEENY_API=${API}`, `WEENY_CONFIG_DIR=${DIR}`)
-    lines.push(`  ProxyCommand ${relay.map(shellQuote).join(' ')}`,
+    const relay = [process.execPath, SELF, '_relay', m.id, API, DIR]
+    lines.push(`  ProxyCommand ${proxyCommand(relay)}`,
       `  ServerAliveInterval 30`)
   } else {
     lines.push(`  HostName ${m.ip}`)
@@ -107,12 +116,14 @@ function ensureSshConfig(m, keyPath) {
 
   const cfg = SSH_CONFIG
   let existing = ''
-  if (!CI_CREDS) try { existing = readFileSync(cfg, 'utf8') } catch {}
+  if (!CI_CREDS) try { existing = readFileSync(cfg, 'utf8') } catch (error) {
+    if (error.code !== 'ENOENT') throw profileAccessError(error, cfg)
+  }
   // strip any prior weeny-managed block for this alias, then append the fresh one
   const stripped = existing.replace(new RegExp(`\\n?${begin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${end.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n?`, 'g'), '\n')
-  mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 })
-  mkdirSync(DIR, { recursive: true, mode: 0o700 })
-  writeFileSync(cfg, stripped.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '') + (stripped.endsWith('\n') || !stripped ? '' : '\n') + block, { mode: 0o600 })
+  profileDirectory(SSH_DIR)
+  profileDirectory(DIR)
+  writeProfile(cfg, stripped.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '') + (stripped.endsWith('\n') || !stripped ? '' : '\n') + block)
   return alias
 }
 
@@ -135,7 +146,8 @@ function sshKeyPath() {
     return CI_CREDS.keyPath
   }
   const stored = loadCreds()?.keyPath
-  if (stored && existsSync(stored) && (ENV.production || resolve(stored).startsWith(SSH_DIR + '/'))) return stored
+  const localKey = stored && relative(SSH_DIR, resolve(stored))
+  if (stored && existsSync(stored) && (ENV.production || (localKey && !isAbsolute(localKey) && localKey !== '..' && !localKey.startsWith('..' + sep)))) return stored
   const weeny = join(SSH_DIR, 'weeny_ed25519')
   if (existsSync(weeny)) return weeny
   return null
@@ -148,7 +160,7 @@ async function registerDeviceKey(explicitKey) {
   let keyPath = explicitKey ? resolve(explicitKey) : sshKeyPath()
   if (!keyPath) {
     console.log(`no SSH key on this device — generating ${join(SSH_DIR, 'weeny_ed25519')}`)
-    mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 })
+    profileDirectory(SSH_DIR)
     keyPath = join(SSH_DIR, 'weeny_ed25519')
     execFileSync('ssh-keygen', ['-t', 'ed25519', '-N', '', '-C', 'weeny', '-f', keyPath])
   }
@@ -157,7 +169,7 @@ async function registerDeviceKey(explicitKey) {
   console.log(`→ registered this device's key with your weeny account`)
   if (unsynced?.length) console.log(`  (couldn't reach: ${unsynced.join(', ')} — it'll pick the key up when it's next running)`)
   const creds = loadCreds()
-  if (creds && !explicitKey) writeFileSync(CREDS, JSON.stringify({ ...creds, keyPath }, null, 2), { mode: 0o600 })
+  if (creds && !explicitKey) writeProfile(CREDS, JSON.stringify({ ...creds, keyPath }, null, 2))
   return keyPath
 }
 
@@ -295,6 +307,7 @@ const commands = {
   },
   async login() {
     if (CI_CREDS) die('Unset WEENY_TOKEN before interactive login; CI uses the provided credentials')
+    checkProfileWritable(DIR)
     const email = flags.email || await ask('email: ')
     if (!flags.code) {
       await call('/api/auth/code', { method: 'POST', body: { email }, auth: false })
@@ -311,8 +324,7 @@ const commands = {
       serverChoices({ status: 'waitlisted' }, v.position)
       return
     }
-    mkdirSync(DIR, { recursive: true })
-    writeFileSync(CREDS, JSON.stringify({ email: v.email, token: v.token, apiBase: API }, null, 2), { mode: 0o600 })
+    writeProfile(CREDS, JSON.stringify({ email: v.email, token: v.token, apiBase: API }, null, 2))
     console.log(`✓ signed in as ${v.email}`)
     serverChoices(v.serverAccess, v.position ?? v.serverAccess?.position)
   },
@@ -326,7 +338,7 @@ const commands = {
     }
     let pub = findPublicKey()
     if (!pub) {
-      mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 })
+      profileDirectory(SSH_DIR)
       console.log(`no SSH key found — generating ${join(SSH_DIR, 'weeny_ed25519')}`)
       execFileSync('ssh-keygen', ['-t', 'ed25519', '-N', '', '-C', 'weeny', '-f', join(SSH_DIR, 'weeny_ed25519')])
       pub = findPublicKey()
@@ -357,7 +369,7 @@ const commands = {
         const keyPath = pub.path.replace(/\.pub$/, '')
         ensureSshConfig(mine, keyPath)   // writes the direct or tunnel ssh-config block
         const creds = loadCreds()
-        if (creds) writeFileSync(CREDS, JSON.stringify({ ...creds, keyPath }, null, 2), { mode: 0o600 })
+        if (creds) writeProfile(CREDS, JSON.stringify({ ...creds, keyPath }, null, 2))
         // Firecracker boxes have no public IP — the way in is `npx weeny-cloud ssh` (rides the
         // VM's own tunnel). Direct machines get the classic ssh line.
         const wayIn = !ENV.production || mine.reachable === 'tunnel' ? `npx weeny-cloud ssh` : `ssh root@${mine.ip}`
@@ -492,7 +504,11 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     const { host } = await sshTarget(m)
     const rest = process.argv.slice(3)
     try { execFileSync('ssh', [...SSH_FLAGS, ...(rest.length ? [] : ['-t']), host, ...rest], { stdio: 'inherit' }) }
-    catch (e) { process.exit(e.status ?? 1) }
+    catch (e) {
+      if (e.code === 'ENOENT') die('OpenSSH client not found. On Windows, install the OpenSSH Client optional feature, then reopen your terminal.')
+      if (e.status === 255) console.error(`SSH exited 255 using configuration "${SSH_CONFIG}". See: npx weeny-cloud help ssh`)
+      process.exit(e.status ?? 1)
+    }
   },
 
   // Hidden: ssh ProxyCommand. Bridges ssh's stdio ↔ the VM's ssh-shim over a WebSocket that
@@ -626,7 +642,12 @@ Create an account and sign in (free server access may be waitlisted) with your e
 Non-interactive (for agents): pass --email first, then re-run with --email + --code.
 The code lands in the human's inbox — unless you already have access to their emails,
 stop and ask them to provide the code.
-Signed out? Delete ~/.weeny/credentials.json.`,
+Configuration: ${CREDS}
+If this folder is not writable (EPERM/EACCES), select a private writable profile and retry.
+PowerShell: $env:WEENY_CONFIG_DIR = Join-Path $env:LOCALAPPDATA 'Weeny'
+Use a separate folder for staging. Keep the same override in subsequent terminals.
+This does not move an existing account; sign in again in the new profile.
+Signed out? Delete the credentials file above.`,
   create: `npx weeny-cloud create [--free]
 
 Provision your server (~2 min): a real Linux box — root, SSH, systemd. Uses your SSH
@@ -656,7 +677,14 @@ Open a shell on your server — or run one command and return. Uses the right ke
 so it always works. Your apps live in /apps, their data in /data.
 Sleeping free servers wake automatically for push or ssh; suspended servers do not.
 No SSH key on this device (new laptop, wiped machine)? No problem — as long as you're
-signed in, ssh generates and registers a fresh device key automatically.`,
+signed in, ssh generates and registers a fresh device key automatically.
+
+The CLI explicitly passes its generated configuration: ${SSH_CONFIG}
+An alias like weeny-<id> is a local SSH-config entry, not a public DNS hostname.
+If a plain ssh command cannot resolve it, use this CLI or pass -F with that config.
+On Windows, Get-Command ssh -All shows competing Windows/Git installations.
+Inspect the selected entry without connecting: ssh -G -F "${SSH_CONFIG}" <alias>
+Do not delete your keys or disable host checking to fix config discovery.`,
   apps: `npx weeny-cloud apps
 
 Every app you can reach: yours (with machine and URL) and the private apps other
@@ -694,6 +722,7 @@ server is tight on memory (\`weeny health\` on the box), tell them and point the
 }
 
 const cmd = process.argv[2]
+try {
 // Never put notices or optional work in CI, the explicit installer, or SSH's byte relay.
 if (!process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) await maybeCheckSkillUpdate(ENV, SELF)
 const SERVER_WORDS = new Set(['deploy', 'start', 'stop', 'restart', 'releases', 'rollback', 'deployments', 'inspect', 'expose', 'unexpose', 'remove', 'env', 'domain', 'allow', 'revoke', 'health'])
@@ -719,3 +748,7 @@ else if (SERVER_WORDS.has(cmd) || cmd in OLD_TO_NEW || cmd in LINUX_HINT) {
   process.exit(1)
 }
 else { console.error(`unknown command: ${cmd}\n`); commandList(); process.exit(1) }
+} catch (error) {
+  if (error.code === 'WEENY_PROFILE_ACCESS') die(error.message)
+  throw error
+}

@@ -27,4 +27,9 @@ export function checkProfileWritable(dir) {
   try { fd = openSync(probe, 'wx', 0o600) }
   catch (error) { throw profileAccessError(error, dir) }
   finally { if (fd !== undefined) { closeSync(fd); unlinkSync(probe) } }
+  // Opening with r+ checks the existing file's ACL/read-only flag without truncation.
+  const credentials = join(dir, 'credentials.json')
+  try { fd = openSync(credentials, 'r+') }
+  catch (error) { if (error.code !== 'ENOENT') throw profileAccessError(error, credentials); return }
+  closeSync(fd)
 }

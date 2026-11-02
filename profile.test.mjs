@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -42,4 +42,25 @@ syncBuiltinESMExports();globalThis.fetch=async()=>{process.stderr.write('LOGIN_C
       assert.deepEqual(readdirSync(profile), [])
     }
   } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('an existing read-only credentials file is preserved and rejected before authentication', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'weeny-readonly-'))
+  const credentials = join(dir, 'credentials.json'), contents = '{"token":"existing-private-test-token"}'
+  writeFileSync(credentials, contents)
+  const preload = join(dir, 'no-auth.mjs')
+  writeFileSync(preload, "globalThis.fetch=async()=>{process.stderr.write('LOGIN_CODE_CONSUMED');throw Error('unexpected API call')}")
+  try {
+    chmodSync(credentials, 0o400)
+    const env = { ...process.env, CI: 'true', WEENY_ENV: 'staging', WEENY_API: 'http://127.0.0.1:3123', WEENY_CONFIG_DIR: dir }
+    delete env.WEENY_TOKEN
+    const result = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href,
+      fileURLToPath(new URL('./cli.mjs', import.meta.url)), 'login', '--email', 'windows-test@example.test', '--code', '123456'],
+    { env, encoding: 'utf8', timeout: 20000 })
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /Cannot access Weeny configuration/)
+    assert.ok(result.stderr.includes(credentials))
+    assert.doesNotMatch(result.stderr, /LOGIN_CODE_CONSUMED|existing-private-test-token/)
+    assert.equal(readFileSync(credentials, 'utf8'), contents)
+  } finally { chmodSync(credentials, 0o600); rmSync(dir, { recursive: true, force: true }) }
 })

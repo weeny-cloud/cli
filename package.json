@@ -1,6 +1,6 @@
 {
   "name": "weeny-cloud",
-  "version": "0.13.2",
+  "version": "0.14.0",
   "description": "weeny.cloud \u2014 a teeny weeny, simple wimple cloud for coding agents",
   "homepage": "https://weeny.cloud",
   "repository": {
@@ -24,6 +24,7 @@
   ],
   "files": [
     "cli.mjs",
+    "account-commands.mjs",
     "feedback.mjs",
     "environment.mjs",
     "profile.mjs",

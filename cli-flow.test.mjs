@@ -66,3 +66,15 @@ test('a free capacity queue returns promptly without pretending provisioning has
   assert.equal(r.status,0,r.stderr);assert.match(r.stderr,/queued for free capacity/);assert.doesNotMatch(r.stdout,/takes ~2 minutes/)
  }finally{rmSync(dir,{recursive:true,force:true})}
 })
+
+test('a staging JSON failure has one parseable error and no plain-text banner', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'weeny-cli-json-'))
+  try {
+    const env = { ...process.env, WEENY_ENV: 'staging', WEENY_API: 'http://127.0.0.1:3123', WEENY_CONFIG_DIR: dir }
+    delete env.WEENY_TOKEN; delete env.WEENY_SSH_KEY_FILE; delete env.WEENY_KNOWN_HOSTS_FILE
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL('./cli.mjs', import.meta.url)), 'server', 'delete', '--json'], { env, encoding: 'utf8', timeout: 10000 })
+    assert.equal(result.status, 1)
+    assert.equal(result.stdout, '')
+    assert.match(JSON.parse(result.stderr).error.message, /approval/)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})

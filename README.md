@@ -135,3 +135,24 @@ uses the normal transactional `push` health/rollback flow. Use a protected GitHu
 production environment with required reviewers where your plan supports it.
 Staging and production apps/credentials should have separate environments. Test
 PRs without secrets; do not deploy untrusted forks using `pull_request_target`.
+
+### Account controls for agents
+
+- `weeny-cloud server status --json`: read state without waking; `resume` wakes a
+  suspended server. `suspend`, `rebuild`, `delete` require explicit human approval
+  and `--confirm`. Rebuild restores the latest snapshot and may lose newer changes;
+  delete destroys all server data. `--wait` waits for the queued action to complete.
+- `weeny-cloud widget APP --branding off --json`: paid/trial owners can remove the
+  badge; free keeps it. `--position bottom` sets its starting position.
+- `weeny-cloud tier NAME --preview --json`: inspect a change without billing. Apply
+  only after the human chooses, with `--confirm`; `--force` overrides a memory warning.
+- `weeny-cloud billing portal`: human payment/invoice/cancellation link.
+  `billing checkout TIER --confirm` prepares a link without paying; `--direct-paid`
+  buys a first server without a trial, after the human chooses that path.
+- `weeny-cloud logout`: revoke this token and remove local credentials. `--local`
+  removes only the local copy when offline.
+
+`server`, `widget`, `tier`, `billing`, `logout`, `apps` and key listing support
+`--json`. Errors with this flag are JSON on stderr and exit nonzero. Poll server
+status after an interrupted request before retrying a disruptive operation.
+Full API and credential reference: https://weeny.cloud/agent-api.md.

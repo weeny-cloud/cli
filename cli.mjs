@@ -2,7 +2,7 @@
 // weeny-cloud — the weeny.cloud laptop CLI. Its whole job: get code and people TO
 // your server. (Apps are operated ON the server with the `weeny` command — ssh in.)
 // Agent-friendly by design: an agent can run every step except reading your inbox.
-import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync, statSync, rmSync } from 'node:fs'
 import { execFileSync, execSync } from 'node:child_process'
 import { createInterface } from 'node:readline/promises'
 import { join, resolve, basename, relative, isAbsolute, sep } from 'node:path'
@@ -12,6 +12,7 @@ import { cliEnvironment, credentialsForOrigin, credentialsFromEnv } from './envi
 import { installSkill, maybeCheckSkillUpdate } from './skill-updates.mjs'
 import { profileAccessError, profileDirectory, writeProfile, checkProfileWritable } from './profile.mjs'
 import { proxyCommand } from './ssh-command.mjs'
+import { accountCommands } from './account-commands.mjs'
 
 const SELF = fileURLToPath(import.meta.url)   // absolute path to this cli.mjs (for ProxyCommand)
 
@@ -32,7 +33,7 @@ const SSH_COMMAND = ['ssh', ...SSH_FLAGS].map(shellQuote).join(' ')
 const CREDS = join(DIR, 'credentials.json')
 if (!ENV.production) console.error(`STAGING: ${API} — isolated account and SSH profile`)
 
-const die = (msg) => { console.error(`✗ ${msg}`); process.exit(1) }
+const die = (msg, details = {}) => { console.error(process.argv.includes('--json') ? JSON.stringify({ error: { message: msg, ...details } }) : `✗ ${msg}`); process.exit(1) }
 
 function loadCreds() {
   if (CI_CREDS) return CI_CREDS
@@ -56,7 +57,7 @@ async function call(path, { method = 'GET', body, auth = true } = {}) {
     ...(ENV.production ? {} : { redirect: 'error' }) })
   const json = await res.json().catch(() => ({}))
   if (res.status === 401 && auth) die('session expired or revoked — run: npx weeny-cloud login')
-  if (res.status === 402) {
+  if (res.status === 402 && !process.argv.includes('--json')) {
     console.error(`\n${json.statusMessage || json.message || 'Subscription required'}`)
     const url = json.data?.checkoutUrl
     if (url) console.error(`\nSort it out here:\n\n  ${url}\n\nThen run this command again.`)
@@ -65,7 +66,7 @@ async function call(path, { method = 'GET', body, auth = true } = {}) {
   if (!res.ok) {
     if (method === 'POST' && path === '/api/machines' && (json.data?.offers || json.data?.code === 'waitlisted'))
       serverChoices({ ...json.data, status: 'waitlisted' }, json.data?.position)
-    die(json.statusMessage || json.message || `${method} ${path} → ${res.status}`)
+    die(json.statusMessage || json.message || `${method} ${path} → ${res.status}`, { status: res.status, data: json.data })
   }
   return json
 }
@@ -290,7 +291,11 @@ function commandList() {
   npx weeny-cloud apps             every app you can reach — yours + shared with you
   npx weeny-cloud token <host>     bearer token to call a private app from a terminal/agent
   npx weeny-cloud keys             this account's device keys (list, --revoke, --register)
-  npx weeny-cloud tier             see plans / change size (humans decide this one)
+  npx weeny-cloud server           status / resume / suspend / rebuild / delete
+  npx weeny-cloud widget <app>     badge and starting position (also on the server)
+  npx weeny-cloud tier             plans / preview / confirmed plan change
+  npx weeny-cloud billing          status / human checkout or billing portal link
+  npx weeny-cloud logout           revoke this token and remove local credentials
   npx weeny-cloud feedback         preview feedback for Theo (send only with --confirm)
   npx weeny-cloud skill            teach your coding agent all of this
   npx weeny-cloud help [command]   details + examples
@@ -553,41 +558,16 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     }
     if ('register' in flags) return registerDeviceKey(flags['key-file'])
     const { keys } = await call('/api/ssh-keys')
+    if ('json' in flags) return console.log(JSON.stringify({ keys }))
     if (!keys.length) return console.log('no keys registered — `npx weeny-cloud ssh` sets one up')
     for (const k of keys) console.log(`${k.id}  ${k.label ?? ''}  ${k.preview}  (${k.createdAt})`)
     console.log(`\nrevoke one: npx weeny-cloud keys --revoke <id>`)
   },
 
-  // Plans. Bare = show them. With a tier name = change it — which changes what the human
-  // pays, so it's interactive-confirm only: agents get told to hand this to their human.
-  async tier() {
-    const bs = await call('/api/billing/status')
-    const want = positionals[0]
-    const price = (t) => bs.founding ? `$${t.foundingUsd}/mo (founding — normally $${t.listUsd})` : `$${t.listUsd}/mo`
-    if (!want) {
-      console.log(`your plan: ${bs.tier}${bs.machineTier && bs.machineTier !== bs.tier ? ` (server still ${bs.machineTier} — resize in progress)` : ''}\n`)
-      for (const t of bs.tiers)
-        console.log(`  ${t.name === bs.tier ? '●' : '○'} ${t.name.padEnd(6)} ${String(t.vcpu)} vcpu · ${t.memGb}gb — ${price(t)}\n           ${t.blurb}`)
-      console.log(`\nchange: npx weeny-cloud tier <name>   (changing plan changes what you pay)`)
-      return
-    }
-    const target = bs.tiers.find(t => t.name === want)
-    if (!target) die(`no '${want}' plan — the plans: ${bs.tiers.map(t => t.name).join(', ')}`)
-    if (want === bs.tier) return console.log(`you're already on ${want}`)
-    if (!process.stdin.isTTY)
-      die(`changing plan changes what your human pays — this one's theirs. Ask them to run:\n  npx weeny-cloud tier ${want}\nor upgrade in the browser: weeny.cloud/dashboard/billing`)
-    console.log(`${bs.tier} → ${want}: ${target.vcpu} vcpu · ${target.memGb}gb at ${price(target)}, prorated from today.`)
-    console.log(`your server reboots into its new size (~a minute; apps come back automatically).`)
-    const yn = await ask('sound good? (yes/no): ')
-    if (!/^y(es)?$/i.test(yn)) return console.log('no worries — nothing changed')
-    const r = await call('/api/billing/tier', { method: 'POST', body: { tier: want } })
-    if (r.checkoutUrl) return console.log(`\nfinish up here (takes a card):\n\n  ${r.checkoutUrl}\n\nyour server resizes as soon as payment lands.`)
-    console.log(`✓ you're on ${want}${r.resizing ? ' — server resizing now (back in ~a minute)' : ''}`)
-  },
-
   // Everything you can reach: your apps + apps shared with you (weeny allow).
   async apps() {
     const r = await call('/api/apps/reachable')
+    if ('json' in flags) return console.log(JSON.stringify(r))
     const owned = r.owned ?? [], shared = r.shared ?? []
     const pad = (s, n) => String(s ?? '').padEnd(n)
     const urlOf = (a) => a.url ?? '(not exposed)'
@@ -650,7 +630,8 @@ If this folder is not writable (EPERM/EACCES), select a private writable profile
 PowerShell: $env:WEENY_CONFIG_DIR = Join-Path $env:LOCALAPPDATA 'Weeny'
 Use a separate folder for staging. Keep the same override in subsequent terminals.
 This does not move an existing account; sign in again in the new profile.
-Signed out? Delete the credentials file above.`,
+Sign out and revoke this token: npx weeny-cloud logout
+Offline only: logout --local removes the local copy without revoking it.`,
   create: `npx weeny-cloud create [--free]
 
 Provision your server (~2 min): a real Linux box — root, SSH, systemd. Uses your SSH
@@ -662,7 +643,8 @@ No card needed, no automatic charge; your apps and data stay.
 account cannot start a trial later. Tell your human that it sleeps after inactivity
 and wakes on request; build larger apps locally or in CI. Existing paid accounts keep their purchased plan. Paid choices are the human's.
 Paid option: ask your human to choose at ${API}/dashboard/account#servers.
-One server per account for now. Delete/suspend/rebuild live in the dashboard.`,
+One server per account for now. Server controls: npx weeny-cloud help server
+Use server status, resume, suspend, rebuild or delete; disruptive actions need --confirm.`,
   push: `npx weeny-cloud push [folder] [app-name] [--build "<cmd>"] [--health "<cmd>"] [--tag "<text>"] [--all] [-- <start command>]
 
 Deploy a local folder to your server as a new release (name defaults to the folder's).
@@ -726,6 +708,37 @@ Agents: changing plan changes what your human pays — that decision is theirs. 
 server is tight on memory (\`weeny health\` on the box), tell them and point them here.`,
 }
 
+Object.assign(HELP, {
+  server: `weeny-cloud server status|resume|suspend|rebuild|delete [--id ID] [--confirm] [--wait] [--json]
+
+Status does not wake a sleeping server. Resume wakes sleeping/suspended servers.
+Suspend takes all apps offline. Rebuild restores the latest snapshot, potentially
+losing newer changes. Delete destroys all data. These disruptive actions require
+specific human approval and --confirm. Commands return immediately; --wait polls
+for completion for up to ten minutes. Inspect status before retrying an action.`,
+  widget: `weeny-cloud widget APP [--id SERVER_ID] [--position bottom] [--branding on|off] [--json]
+
+Read or change appearance through the owner API, without waking the server.
+Positions: top-left, top, top-right, right, bottom-right, bottom, bottom-left, left.
+Free apps require the built with weeny badge; paid/trial apps can remove it.`,
+  tier: `weeny-cloud tier [NAME] [--preview|--confirm] [--force] [--json]
+
+Read plans; preview a change without billing; apply a human-approved change with
+--confirm (or interactive confirmation). --force explicitly overrides a downgrade
+memory warning. The human chooses spending. Checkout still requires payment.`,
+  billing: `weeny-cloud billing [status|portal|checkout TIER --confirm [--direct-paid]] [--json]
+
+Return plans, a portal link for invoices/payment/cancellation, or a checkout link
+for the human's chosen tier. --direct-paid buys a first paid server without a trial.
+Preparing a link does not pay. Existing subscribers change size through tier.`,
+  logout: `weeny-cloud logout [--local] [--json]
+
+Revoke this account token, then remove its local credentials. Other sessions and
+SSH keys stay active. --local works offline but leaves the token valid on the server.`,
+})
+
+const account = accountCommands({ call, loadCreds, ask, interactive: !!process.stdin.isTTY, fromEnv: !!CI_CREDS,
+  clearCredentials: () => rmSync(CREDS, { force: true }) })
 const cmd = process.argv[2]
 try {
 // Never put notices or optional work in CI, the explicit installer, or SSH's byte relay.
@@ -733,10 +746,11 @@ if (!process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) aw
 const SERVER_WORDS = new Set(['deploy', 'start', 'stop', 'restart', 'releases', 'rollback', 'deployments', 'inspect', 'expose', 'unexpose', 'remove', 'env', 'domain', 'allow', 'revoke', 'health'])
 const OLD_TO_NEW = { run: 'deploy', rm: 'remove', list: '', ls: '', access: 'allow', guide: 'help' }
 const LINUX_HINT = { logs: 'journalctl -u weeny-APP -f' }
-const ALIASES = { status: 'help', whoami: 'help' } // old names → orientation
+const ALIASES = { status: 'server', whoami: 'help' } // old names → orientation
 
 if (!cmd) await orient()
 else if (cmd === '--help' || cmd === '-h') await commands.help()
+else if (account[ALIASES[cmd] ?? cmd]) await account[ALIASES[cmd] ?? cmd](process.argv.slice(3))
 else if (commands[ALIASES[cmd] ?? cmd]) await commands[ALIASES[cmd] ?? cmd]()
 else if (SERVER_WORDS.has(cmd) || cmd in OLD_TO_NEW || cmd in LINUX_HINT) {
   const app = process.argv[3] && !process.argv[3].startsWith('-') ? process.argv[3] : '<app>'
@@ -754,6 +768,5 @@ else if (SERVER_WORDS.has(cmd) || cmd in OLD_TO_NEW || cmd in LINUX_HINT) {
 }
 else { console.error(`unknown command: ${cmd}\n`); commandList(); process.exit(1) }
 } catch (error) {
-  if (error.code === 'WEENY_PROFILE_ACCESS') die(error.message)
-  throw error
+  die(error.message ?? String(error))
 }

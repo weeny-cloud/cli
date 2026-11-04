@@ -24,6 +24,7 @@
   ],
   "files": [
     "cli.mjs",
+    "account-commands.mjs",
     "feedback.mjs",
     "environment.mjs",
     "profile.mjs",

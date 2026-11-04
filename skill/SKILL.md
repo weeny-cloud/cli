@@ -178,16 +178,27 @@ DNS provider. Bare `weeny domain myapp` checks progress; `--remove` detaches.
 - If push output warns the box is running out of memory (or an app gets OOM-killed),
   that's a memory problem, not a code problem — `weeny health` has the detail. A bigger
   plan changes what your user pays, so **tell them and let them decide**
-  (weeny.cloud/dashboard/account#billing, or they run `npx weeny-cloud tier`). Never change
-  the plan yourself.
+  (weeny.cloud/dashboard/account#billing, or they run `npx weeny-cloud tier`). Never choose or change
+  the plan without the human’s explicit approval.
 - On the **free plan** the server sleeps after ~30 quiet minutes and wakes on the next
   request (~15s; visitors see a "waking up" page). Apps restart on wake, but in-memory
   state does not survive and background daemons are off while it sleeps — keep state in
   `$WEENY_DATA_DIR`, and don't build anything that depends on an always-running process.
-  Public apps wear a small "made with weeny" badge; custom domains are paid-plan only.
+  Public apps wear a small "built with weeny" badge; custom domains are paid-plan only.
   Always-on = a paid plan: the user's call.
-- To delete, suspend, or rebuild the server itself, use the dashboard at
-  https://weeny.cloud — there is no CLI teardown.
+- Server controls: `npx weeny-cloud server status|resume|suspend|rebuild|delete`.
+  `status --json` does not wake it; `--wait` polls completion. Suspend/rebuild/delete
+  need the human's approval and `--confirm`. Rebuild restores the latest snapshot
+  and may lose newer changes; delete destroys all data. MCP agents use `server`.
+- Badge/position: `weeny widget APP [--branding on|off] [--position bottom] [--json]`
+  on the server, `npx weeny-cloud widget APP` on a laptop, or MCP `appearance`.
+  Branding is required on free and optional on paid/trial.
+- Billing: `npx weeny-cloud tier NAME --preview --json` makes no change. Only after
+  the human chooses may you apply it with `--confirm`; `--force` overrides a memory
+  downgrade warning. `billing portal` returns invoices/payment/cancellation;
+  `billing checkout TIER --confirm` returns a payment link without paying.
+- Sign out with `npx weeny-cloud logout` to revoke this token; deleting a local file
+  alone does not revoke it. Other devices and SSH keys remain active.
 
 ## Stateful services (databases, n8n, …)
 

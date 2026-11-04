@@ -4,7 +4,7 @@ import { accountCommands } from './account-commands.mjs'
 
 function fixture() {
   const calls = [], lines = []
-  const machine = { id: 'mine', name: 'server', status: 'suspended', tier: 'weeny', tunnelSecret: 'never-print', apps: [{ id: 'a', name: 'app' }] }
+  const machine = { id: 'mine', name: 'server', status: 'suspended', tier: 'weeny', diskMb: 30720, tunnelSecret: 'never-print', apps: [{ id: 'a', name: 'app' }] }
   let policy = { free: false, enabled: true, settings: { position: 'left', branding: true } }, cleared = false
   const call = async (path, request = {}) => {
     calls.push({ path, ...request })
@@ -14,8 +14,8 @@ function fixture() {
       if (request.method === 'PUT') policy = { ...policy, settings: request.body }
       return policy
     }
-    if (path === '/api/billing/status') return { tier: 'weeny', founding: true, tiers: [{ name: 'teeny', memGb: 1, vcpu: 1, foundingUsd: 3, listUsd: 5 }] }
-    if (path === '/api/billing/tier') return request.body.preview ? { preview: true, warning: 'memory warning' } : { tier: 'teeny', resizing: true }
+    if (path === '/api/billing/status') return { tier: 'weeny', machineDiskGb: 30, founding: true, tiers: [{ name: 'teeny', memGb: 1, diskGb: 10, vcpu: 1, foundingUsd: 3, listUsd: 5 }] }
+    if (path === '/api/billing/tier') return request.body.preview ? { preview: true, targetDiskMb: 30720, warning: 'memory warning' } : { tier: 'teeny', resizing: true }
     if (path === '/api/billing/portal') return { url: 'https://billing.example.test' }
     if (path === '/api/billing/checkout') return { url: 'https://checkout.example.test' }
     if (path === '/api/auth/logout') return { ok: true }
@@ -78,4 +78,17 @@ test('JSON tier changes never prompt, even in a terminal; env-only offline logou
     interactive: true, ask: () => assert.fail('JSON mode must not prompt'), fromEnv: true })
   await assert.rejects(commands.tier(['teeny','--json']), /human pays/)
   await assert.rejects(commands.logout(['--local','--json']), /Unset WEENY_TOKEN/)
+})
+
+
+test('shows catalogue disk allowances separately from the existing server and retained upgrade size', async()=>{
+ const f=fixture()
+ await f.commands.server(['status'])
+ assert.match(f.lines.at(-1),/30 GiB disk/)
+ await f.commands.tier([])
+ assert.match(f.lines.at(-1),/your server has 30 GiB disk/)
+ assert.match(f.lines.at(-1),/teeny: 1 GB, 1 vCPU, 10 GiB disk/)
+ await f.commands.tier(['teeny','--preview'])
+ assert.match(f.lines.at(-1),/resulting disk 30 GiB/)
+ assert.equal(f.calls.filter(c=>c.path==='/api/billing/tier'&&!c.body.preview).length,0)
 })

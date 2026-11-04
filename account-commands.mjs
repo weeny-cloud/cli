@@ -33,7 +33,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       if (action === 'status') {
         const all = (await machines()).filter(m => !options.id || m.id === options.id).map(publicMachine)
         if (options.id && !all.length) throw new Error('No such server')
-        return emit({ machines: all }, options, all.map(m => `${m.id}  ${m.name}  ${m.status}  ${m.tier}`).join('\n') || 'No server yet')
+        return emit({ machines: all }, options, all.map(m => `${m.id}  ${m.name}  ${m.status}  ${m.tier}${m.diskMb == null ? '' : `  ${m.diskMb / 1024} GiB disk`}`).join('\n') || 'No server yet')
       }
       if (action !== 'resume' && !options.confirm) throw new Error(
         `${action === 'delete' ? 'Delete destroys this server and all its data.' : action === 'rebuild' ? 'Rebuild restores the latest snapshot; changes since it can be lost.' : 'Suspend takes every app offline until resumed.'} Get the human’s approval, then repeat with --confirm.`)
@@ -93,13 +93,13 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       const bs = await call('/api/billing/status'), want = args[0]
       if (args.length > 1) throw new Error('Usage: weeny-cloud tier [NAME] [--preview|--confirm] [--force] [--json]')
       const price = t => `$${bs.founding ? t.foundingUsd : t.listUsd}/mo`
-      if (!want) return emit(bs, options, `Your plan: ${bs.tier}\n${bs.tiers.map(t => `${t.name}: ${t.memGb} GB, ${t.vcpu} vCPU, ${price(t)} — ${t.blurb}`).join('\n')}\nPreview: weeny-cloud tier NAME --preview`)
+      if (!want) return emit(bs, options, `Your plan: ${bs.tier}${bs.machineDiskGb == null ? '' : `; your server has ${bs.machineDiskGb} GiB disk`}\n${bs.tiers.map(t => `${t.name}: ${t.memGb} GB, ${t.vcpu} vCPU${t.diskGb == null ? '' : `, ${t.diskGb} GiB disk`}, ${price(t)} — ${t.blurb}`).join('\n')}\nPreview: weeny-cloud tier NAME --preview`)
       const target = bs.tiers.find(t => t.name === want && t.name !== 'free')
       if (!target) throw new Error('Choose teeny, weeny or meany. To return to free, cancel through billing portal.')
       if (options.preview) {
         const preview = await call('/api/billing/tier', { method: 'POST', body: { tier: want, preview: true } })
         return emit({ ...preview, plan: target, monthlyUsd: bs.founding ? target.foundingUsd : target.listUsd }, options,
-          `${bs.tier} → ${want}: ${price(target)}; server reboots during resize. No change made.${preview.warning ? '\n' + preview.warning : ''}`)
+          `${bs.tier} → ${want}: ${price(target)}${preview.targetDiskMb == null ? '' : `; resulting disk ${preview.targetDiskMb / 1024} GiB`}; server reboots during resize. No change made.${preview.warning ? '\n' + preview.warning : ''}`)
       }
       if (!options.confirm) {
         if (options.json || !interactive) throw new Error(`Changing plan changes what the human pays. Ask them to choose, then use tier ${want} --confirm; use --preview first.`)

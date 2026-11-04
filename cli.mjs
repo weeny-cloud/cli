@@ -747,7 +747,9 @@ const cmd = process.argv[2]
 try {
 // Never put notices or optional work in CI, the explicit installer, or SSH's byte relay.
 if (!process.argv.includes('--json') && !process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) await maybeCheckSkillUpdate(ENV, SELF)
-if(automaticInboxAllowed(process.argv.slice(2),process.env,{laptop:true})&&loadCreds()?.token)await makeInbox().automatic()
+try {
+  if (automaticInboxAllowed(process.argv.slice(2), process.env, { laptop: true }) && loadCreds()?.token) await makeInbox().automatic()
+} catch {} // Optional credential/client setup must not replace the command's own error handling.
 const SERVER_WORDS = new Set(['deploy', 'start', 'stop', 'restart', 'releases', 'rollback', 'deployments', 'inspect', 'expose', 'unexpose', 'remove', 'env', 'domain', 'allow', 'revoke', 'health'])
 const OLD_TO_NEW = { run: 'deploy', rm: 'remove', list: '', ls: '', access: 'allow', guide: 'help' }
 const LINUX_HINT = { logs: 'journalctl -u weeny-APP -f' }

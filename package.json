@@ -25,6 +25,7 @@
   "files": [
     "cli.mjs",
     "account-commands.mjs",
+    "agent-inbox.mjs",
     "feedback.mjs",
     "environment.mjs",
     "profile.mjs",

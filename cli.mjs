@@ -8,6 +8,7 @@ import { createInterface } from 'node:readline/promises'
 import { join, resolve, basename, relative, isAbsolute, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { feedbackHelp, runFeedback } from './feedback.mjs'
+import { inboxClient, automaticInboxAllowed } from './agent-inbox.mjs'
 import { cliEnvironment, credentialsForOrigin, credentialsFromEnv } from './environment.mjs'
 import { installSkill, maybeCheckSkillUpdate } from './skill-updates.mjs'
 import { profileAccessError, profileDirectory, writeProfile, checkProfileWritable } from './profile.mjs'
@@ -296,6 +297,7 @@ function commandList() {
   npx weeny-cloud tier             plans / preview / confirmed plan change
   npx weeny-cloud billing          status / human checkout or billing portal link
   npx weeny-cloud logout           revoke this token and remove local credentials
+  npx weeny-cloud inbox            warnings and messages (read ID / ack ID / --json)
   npx weeny-cloud feedback         preview feedback for Theo (send only with --confirm)
   npx weeny-cloud skill            teach your coding agent all of this
   npx weeny-cloud help [command]   details + examples
@@ -303,7 +305,9 @@ function commandList() {
 on the server, apps are run with \`weeny\` — bare \`weeny\` there explains itself.`)
 }
 
+const makeInbox=()=>{const c=loadCreds();if(!c?.token)throw new Error('Sign in to read your inbox');return inboxClient({api:API,token:c.token,dir:DIR})}
 const commands = {
+  async inbox(){await makeInbox().command(process.argv.slice(3))},
   async feedback() {
     try {
       await runFeedback(process.argv.slice(3), { command: 'npx weeny-cloud feedback',
@@ -743,6 +747,7 @@ const cmd = process.argv[2]
 try {
 // Never put notices or optional work in CI, the explicit installer, or SSH's byte relay.
 if (!process.argv.includes('--json') && !process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) await maybeCheckSkillUpdate(ENV, SELF)
+if(automaticInboxAllowed(process.argv.slice(2),process.env,{laptop:true})&&loadCreds()?.token)await makeInbox().automatic()
 const SERVER_WORDS = new Set(['deploy', 'start', 'stop', 'restart', 'releases', 'rollback', 'deployments', 'inspect', 'expose', 'unexpose', 'remove', 'env', 'domain', 'allow', 'revoke', 'health'])
 const OLD_TO_NEW = { run: 'deploy', rm: 'remove', list: '', ls: '', access: 'allow', guide: 'help' }
 const LINUX_HINT = { logs: 'journalctl -u weeny-APP -f' }

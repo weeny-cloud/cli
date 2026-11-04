@@ -31,7 +31,7 @@ const SSH_FLAGS = ['-F', SSH_CONFIG]
 const shellQuote = v => `'${String(v).replace(/'/g, `'\\''`)}'`
 const SSH_COMMAND = ['ssh', ...SSH_FLAGS].map(shellQuote).join(' ')
 const CREDS = join(DIR, 'credentials.json')
-if (!ENV.production) console.error(`STAGING: ${API} — isolated account and SSH profile`)
+if (!ENV.production && !process.argv.includes('--json')) console.error(`STAGING: ${API} — isolated account and SSH profile`)
 
 const die = (msg, details = {}) => { console.error(process.argv.includes('--json') ? JSON.stringify({ error: { message: msg, ...details } }) : `✗ ${msg}`); process.exit(1) }
 
@@ -742,7 +742,7 @@ const account = accountCommands({ call, loadCreds, ask, interactive: !!process.s
 const cmd = process.argv[2]
 try {
 // Never put notices or optional work in CI, the explicit installer, or SSH's byte relay.
-if (!process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) await maybeCheckSkillUpdate(ENV, SELF)
+if (!process.argv.includes('--json') && !process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) await maybeCheckSkillUpdate(ENV, SELF)
 const SERVER_WORDS = new Set(['deploy', 'start', 'stop', 'restart', 'releases', 'rollback', 'deployments', 'inspect', 'expose', 'unexpose', 'remove', 'env', 'domain', 'allow', 'revoke', 'health'])
 const OLD_TO_NEW = { run: 'deploy', rm: 'remove', list: '', ls: '', access: 'allow', guide: 'help' }
 const LINUX_HINT = { logs: 'journalctl -u weeny-APP -f' }

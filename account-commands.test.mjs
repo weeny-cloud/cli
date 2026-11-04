@@ -72,3 +72,10 @@ test('logout revokes before clearing; offline logout explicitly preserves the re
   const failed = accountCommands({ call: async () => { throw new Error('offline') }, loadCreds: () => ({ token: 'fixture' }), clearCredentials: () => { cleared = true } })
   await assert.rejects(failed.logout([]), /offline/); assert.equal(cleared, false)
 })
+
+test('JSON tier changes never prompt, even in a terminal; env-only offline logout cannot claim success', async () => {
+  const commands = accountCommands({ call: async () => ({ tier: 'weeny', tiers: [{ name: 'teeny' }] }),
+    interactive: true, ask: () => assert.fail('JSON mode must not prompt'), fromEnv: true })
+  await assert.rejects(commands.tier(['teeny','--json']), /human pays/)
+  await assert.rejects(commands.logout(['--local','--json']), /Unset WEENY_TOKEN/)
+})

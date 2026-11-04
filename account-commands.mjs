@@ -102,7 +102,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
           `${bs.tier} → ${want}: ${price(target)}; server reboots during resize. No change made.${preview.warning ? '\n' + preview.warning : ''}`)
       }
       if (!options.confirm) {
-        if (!interactive) throw new Error(`Changing plan changes what the human pays. Ask them to choose, then use tier ${want} --confirm; use --preview first.`)
+        if (options.json || !interactive) throw new Error(`Changing plan changes what the human pays. Ask them to choose, then use tier ${want} --confirm; use --preview first.`)
         const yes = await ask(`${bs.tier} → ${want}: ${price(target)}, prorated; server reboots. ${options.force ? 'Force bypasses the memory warning. ' : ''}Confirm? (yes/no): `)
         if (!/^y(es)?$/i.test(yes)) return output('Nothing changed')
       }
@@ -112,6 +112,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
     async logout(argv) {
       const { args, options } = parse(argv, [], ['local'])
       if (args.length) throw new Error('Usage: weeny-cloud logout [--local] [--json]')
+      if (options.local && fromEnv) throw new Error('Unset WEENY_TOKEN to sign out locally; logout --local cannot remove an environment token')
       if (!options.local && loadCreds()?.token) await call('/api/auth/logout', { method: 'POST' })
       if (!fromEnv) clearCredentials()
       emit({ signedOut: true, revoked: !options.local, environmentToken: !!fromEnv }, options,

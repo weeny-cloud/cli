@@ -42,7 +42,7 @@ export function inboxClient({api,token,machine=false,dir,fetcher=fetch,now=Date.
    for(const m of pending) {
     const key=m.id+':'+m.version,shown=cache.shown[key]
     if(shown&&at>=shown&&at-shown<86400000)continue
-    print(`[Weeny ${m.severity}] ${m.summary.slice(0,240)}${m.action?' '+m.action.slice(0,500):''}`)
+    print(`[Weeny ${m.severity}] ${m.summary.replace(/\s+/g,' ').slice(0,180)}${m.action?' '+m.action.replace(/\s+/g,' ').slice(0,360):''}`)
     cache.shown[key]=at; count++
     // Delivery receipts are best-effort and bounded; stdout is never touched.
     await event(m.id,'display',cache.recipient,m.version,1000).catch(()=>{})

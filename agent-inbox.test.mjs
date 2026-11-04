@@ -10,7 +10,7 @@ test('automatic delivery is bounded, concurrent-safe, throttled, not an acknowle
  const fetcher=async(url,opts)=>{calls.push([url,opts]);if(opts.method==='GET'){reads++;return {ok:true,json:async()=>({messages})}}return {ok:true,json:async()=>({ok:true})}}
  try{
   const c=inboxClient({api:'https://staging.weeny.cloud',token:'test',dir,fetcher,now:()=>now,print:x=>printed.push(x)})
-  await Promise.all([c.automatic(),c.automatic()]);assert.equal(reads,1);assert.equal(printed.length,3)
+  await Promise.all([c.automatic(),c.automatic()]);assert.equal(reads,1);assert.equal(printed.length,3);assert.doesNotMatch(printed.join('\n'),/Read health/)
   assert.ok(calls.every(([,o])=>o.redirect==='error'));assert.ok(calls.filter(([,o])=>o.body).every(([,o])=>JSON.parse(o.body).action==='display'))
   await c.automatic();assert.equal(reads,1)
   now+=61000;await c.automatic();assert.equal(printed.length,5) // the third, previously undisplayed warning

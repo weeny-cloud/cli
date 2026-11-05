@@ -158,3 +158,5 @@ PRs without secrets; do not deploy untrusted forks using `pull_request_target`.
 `--json`. Errors with this flag are JSON on stderr and exit nonzero. Poll server
 status after an interrupted request before retrying a disruptive operation.
 Full API and credential reference: https://weeny.cloud/agent-api.md.
+
+New paid server disk allowances are Teeny 10 GiB, Weeny 20 GiB and Meany 60 GiB, including the OS and tools. `tier` reads current plan specs from the API and shows the existing server’s actual disk separately. Existing larger disk promises survive renewals, rebuilds and downgrades. `tier NAME --preview` reports the resulting disk before a human confirms a change.

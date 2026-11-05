@@ -1,7 +1,7 @@
 {
   "name": "weeny-cloud",
   "version": "0.14.0",
-  "description": "weeny.cloud \u2014 a teeny weeny, simple wimple cloud for coding agents",
+  "description": "weeny.cloud \u2014 a real Linux server for coding agents. Free forever, with HTTPS, private sharing and backups.",
   "homepage": "https://weeny.cloud",
   "repository": {
     "type": "git",

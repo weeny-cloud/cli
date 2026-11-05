@@ -33,7 +33,7 @@ ${source}
   }
 }
 
-test('free creation requests the free offer and gives one configured limits notice on stderr', () => {
+test('free creation requests the free offer and gives one configured sleep notice on stderr', () => {
   const f = fixture(`let created=false;
 globalThis.fetch=async(url,opts)=>{
  if(url.endsWith('/api/me')) return Response.json({serverAccess:{status:'available',freeIdleMinutes:17}});
@@ -46,9 +46,9 @@ globalThis.fetch=async(url,opts)=>{
     const r = f.run('create', '--free')
     assert.equal(r.status, 0, r.stderr)
     assert.match(r.stdout, /your server is ready/)
-    assert.match(r.stderr, /Free · 1 GB RAM · sleeps after 17 idle minutes/)
-    assert.match(r.stderr, /Tell your human about sleeping/)
-    assert.equal((r.stderr.match(/Free ·/g) ?? []).length, 1)
+    assert.match(r.stderr, /Free forever · 1 GB RAM · sleeps after 17 idle minutes/)
+    assert.match(r.stderr, /Your apps and data stay/)
+    assert.equal((r.stderr.match(/Free forever ·/g) ?? []).length, 1)
     assert.doesNotMatch(r.stdout, /idle minutes|Tell your human|Build larger/)
   } finally { f.close() }
 })
@@ -63,11 +63,11 @@ test('default creation lets the server choose the existing entitlement without c
   try {
     const r = f.run('create')
     assert.equal(r.status, 0, r.stderr)
-    assert.doesNotMatch(r.stderr, /Free ·|1 GB RAM/)
+    assert.doesNotMatch(r.stderr, /Free forever ·|1 GB RAM/)
   } finally { f.close() }
 })
 
-test('login accepts object availability, saves the token and explains free capacity to the agent', () => {
+test('login accepts object availability, saves the token and offers the free start to the agent', () => {
   const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/auth/verify')});
  return Response.json({status:'ok',email:'person@example.test',token:'new-token',serverAccess:{status:'available',freeIdleMinutes:17,offers:{trial:{available:false},free:{available:true}}}});
@@ -76,7 +76,7 @@ test('login accepts object availability, saves the token and explains free capac
     const r = f.run('login', '--email', 'person@example.test', '--code', '123456')
     assert.equal(r.status, 0, r.stderr)
     assert.match(r.stderr, /create --free/)
-    assert.match(r.stderr, /First tell your human.*17 idle minutes/)
+    assert.match(r.stderr, /Sleeps after 17 idle minutes/)
     assert.doesNotMatch(r.stderr, /trial available|No trial time|#undefined/)
     assert.doesNotMatch(r.stdout, /1 GB|idle minutes|paid plan/)
     assert.equal(JSON.parse(readFileSync(join(f.profile, 'credentials.json'), 'utf8')).token, 'new-token')
@@ -108,15 +108,14 @@ test('bare CLI shows a free server once without rechecking admission or waking i
     const r = f.run()
     assert.equal(r.status, 0, r.stderr)
     assert.match(r.stdout, /server: sleeping/)
-    assert.equal((r.stderr.match(/Free ·/g) ?? []).length, 1)
+    assert.equal((r.stderr.match(/Free forever ·/g) ?? []).length, 1)
     assert.match(r.stderr, /17 idle minutes/)
-    assert.match(r.stderr, /dashboard\/account#billing/)
-    assert.doesNotMatch(r.stderr, /dashboard\/account#servers/)
+    assert.doesNotMatch(r.stderr, /dashboard\/account#/)
     assert.doesNotMatch(r.stdout, /idle minutes/)
   } finally { f.close() }
 })
 
-test('create refusal prints available free alternative and paid handoff without polling', () => {
+test('create refusal prints the available free alternative without a paid detour or polling', () => {
   const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/machines')}); assert.equal(opts.method,'POST');
  return Response.json({statusMessage:'Full-size trials are full',data:{code:'waitlisted',freeIdleMinutes:17,offers:{trial:{available:false},free:{available:true}}}},{status:403});
@@ -125,7 +124,7 @@ test('create refusal prints available free alternative and paid handoff without 
     const r = f.run('create')
     assert.equal(r.status, 1)
     assert.match(r.stderr, /create --free/)
-    assert.match(r.stderr, /Only the human should choose a paid plan/)
+    assert.doesNotMatch(r.stderr, /Paid server available|Only the human should choose a paid plan/)
     assert.match(r.stderr, /Full-size trials are full/)
     assert.doesNotMatch(r.stdout, /setting up|queued/)
   } finally { f.close() }
@@ -147,7 +146,7 @@ process.on('exit',()=>{assert.equal(reads,3);assert.equal(posts,${initial === 's
       assert.equal(r.status, 0, r.stderr)
       assert.equal(r.stdout, 'payload\n')
       assert.equal((r.stderr.match(/waking your server/g) ?? []).length, 1)
-      assert.doesNotMatch(r.stderr, /Free ·|larger builds|dashboard\/account#/)
+      assert.doesNotMatch(r.stderr, /Free forever ·|larger builds|dashboard\/account#/)
     } finally { f.close() }
   })
 }
@@ -271,7 +270,7 @@ process.on('exit',()=>{assert.equal(reads,3);assert.equal(resumes,1);});`)
     assert.equal(r.status, 0, r.stderr)
     assert.match(r.stdout, /your server is ready/)
     assert.equal((r.stderr.match(/waking your server/g) ?? []).length, 1)
-    assert.equal((r.stderr.match(/Free ·/g) ?? []).length, 1)
+    assert.equal((r.stderr.match(/Free forever ·/g) ?? []).length, 1)
   } finally { f.close() }
 })
 
@@ -289,7 +288,7 @@ test('create does not report a device ready when its existing server key sync fa
 })
 
 for (const trialAvailable of [false, true]) {
-  test(`login includes a human paid option alongside ${trialAvailable ? 'available' : 'full'} trial capacity`, () => {
+  test(`login leads with free access when trial availability is ${trialAvailable}`, () => {
     const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/auth/verify')});
  return Response.json({status:'ok',email:'person@example.test',token:'new-token',serverAccess:{status:'available',freeIdleMinutes:17,offers:{trial:{available:${trialAvailable}},free:{available:true}},plans:[{tier:'teeny',available:true}]}});
@@ -297,19 +296,16 @@ for (const trialAvailable of [false, true]) {
     try {
       const r = f.run('login', '--email', 'person@example.test', '--code', '123456')
       assert.equal(r.status, 0, r.stderr)
-      assert.match(r.stderr, /Paid server available/)
-      assert.match(r.stderr, /Only the human should choose a paid plan/)
-      assert.match(r.stderr, /charges immediately without a free trial/)
-      assert.equal((r.stderr.match(/\/dashboard\/account#servers/g) ?? []).length, 1)
-      assert.ok(r.stderr.indexOf('Paid server available') < r.stderr.indexOf('Skip the trial — start at 1 GB') || trialAvailable)
-      if (trialAvailable) assert.ok(r.stderr.indexOf('Start free with 7 days at 4 GB') < r.stderr.indexOf('Paid server available'))
-      assert.doesNotMatch(r.stdout, /paid plan|Paid server|\/dashboard\/account#/)
-      assert.doesNotMatch(r.stderr, /dashboard\/account#billing/)
+      assert.match(r.stderr, /free forever/)
+      assert.match(r.stderr, /create --free/)
+      assert.doesNotMatch(r.stderr, /Paid server|paid plan|charges immediately|dashboard\/account#/)
+      if (trialAvailable) assert.ok(r.stderr.indexOf('Start free with 7 days at 4 GB') < r.stderr.indexOf('Start at 1 GB free forever'))
+      assert.doesNotMatch(r.stdout, /paid plan|Paid server|dashboard\/account#/)
     } finally { f.close() }
   })
 }
 
-test('an unavailable creation leads with available paid capacity and then offers the free alternative', () => {
+test('an unavailable trial creation leads with the available free alternative', () => {
   const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/machines')});assert.equal(opts.method,'POST');
  return Response.json({statusMessage:'Full-size trials are full',data:{code:'waitlisted',offers:{trial:{available:false},free:{available:true}},plans:[{tier:'weeny',available:true}]}},{status:403});
@@ -317,11 +313,9 @@ test('an unavailable creation leads with available paid capacity and then offers
   try {
     const r = f.run('create')
     assert.equal(r.status, 1)
-    assert.ok(r.stderr.indexOf('Paid server available') < r.stderr.indexOf('Skip the trial — start at 1 GB'))
-    assert.match(r.stderr, /Only the human should choose a paid plan/)
-    assert.equal((r.stderr.match(/\/dashboard\/account#servers/g) ?? []).length, 1)
-    assert.doesNotMatch(r.stdout, /Paid server|\/dashboard\/account#/)
-    assert.doesNotMatch(r.stderr, /dashboard\/account#billing/)
+    assert.match(r.stderr, /Start at 1 GB free forever/)
+    assert.doesNotMatch(r.stderr, /Paid server available|dashboard\/account#/)
+    assert.match(r.stderr, /Full-size trials are full/)
   } finally { f.close() }
 })
 
@@ -340,7 +334,7 @@ test('a failed free claim does not repeat its human paid link', () => {
   } finally { f.close() }
 })
 
-test('new trial creation includes one human paid upgrade link without claiming an immediate charge', () => {
+test('new trial creation completes without an unsolicited paid upgrade link', () => {
   const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/machines')});
  const trial={...machine,tier:'weeny',memMb:4096,trialPending:opts.method==='POST'};
@@ -349,8 +343,7 @@ test('new trial creation includes one human paid upgrade link without claiming a
   try {
     const r = f.run('create')
     assert.equal(r.status, 0, r.stderr)
-    assert.match(r.stderr, /Paid upgrade.*Ask your human to choose/)
-    assert.equal((r.stderr.match(/\/dashboard\/account#billing/g) ?? []).length, 1)
+    assert.doesNotMatch(r.stderr, /Paid upgrade|dashboard\/account#billing/)
     assert.doesNotMatch(r.stderr, /charges immediately/)
     assert.doesNotMatch(r.stdout, /\/dashboard\/account#billing/)
   } finally { f.close() }

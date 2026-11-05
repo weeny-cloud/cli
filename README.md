@@ -158,3 +158,11 @@ PRs without secrets; do not deploy untrusted forks using `pull_request_target`.
 `--json`. Errors with this flag are JSON on stderr and exit nonzero. Poll server
 status after an interrupted request before retrying a disruptive operation.
 Full API and credential reference: https://weeny.cloud/agent-api.md.
+
+
+### Agent inbox
+
+`npx weeny-cloud inbox` lists queued warnings and operator messages. Read details
+with `inbox read ID`, acknowledge explicitly with `inbox ack ID`; all support
+`--json`. Check at session start and after resource failures. Messages do not
+authorize spending. Use `tier NAME --preview` and ask the human before payment.

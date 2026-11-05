@@ -74,11 +74,11 @@ Only after the user approves the draft, repeat with --confirm to email it to me.
 
 // This is deliberately outside the deploy transaction: an old/unavailable control
 // plane or a failed invitation must never turn a healthy deployment into a failure.
-export async function showFeedbackInvitation(identity, { fetcher = fetch, print = console.log } = {}) {
+export async function showFeedbackInvitation(identity, { fetcher = fetch, print = console.log, delivery = 'inline' } = {}) {
   if (!identity?.apiBase || !identity?.token) return
   try {
     const res = await fetcher(identity.apiBase + '/api/machine/feedback-invitation', {
-      method: 'POST', headers: { Authorization: `Bearer ${identity.token}` },
+      method: 'POST', headers: { Authorization: `Bearer ${identity.token}`, ...(delivery==='inbox'?{'x-weeny-inbox':'1'}:{}) },
       signal: AbortSignal.timeout(2000),
     })
     if (res.ok && (await res.json()).show === true) print(`\n${feedbackInvitation}`)

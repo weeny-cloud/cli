@@ -77,7 +77,8 @@ import {syncBuiltinESMExports} from 'node:module';
 const original = fs.unlinkSync;
 fs.unlinkSync = (path, ...args) => {
   if(path === ${JSON.stringify(join(path, staleOwner))}) {
-    process.send({type:'observed'});
+    // Named-pipe IPC may not flush while this synchronous hook waits on Windows.
+    fs.writeFileSync(${JSON.stringify(barrier)}+'.'+process.pid+'.observed','yes');
     const deadline=Date.now()+5000;
     while(!fs.existsSync(${JSON.stringify(barrier)})) {
       if(Date.now()>deadline) throw Error('recovery barrier timed out');
@@ -97,19 +98,21 @@ if(lock) {
   function launch() {
     const child = spawn(process.execPath, [worker], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] })
     t.after(() => child.kill())
-    let observed, result, stderr = ''
-    const sawOldOwner = new Promise(resolve => { observed = resolve })
+    let result, stderr = ''
     const outcome = new Promise(resolve => { result = resolve })
     child.stderr.on('data', data => { stderr += data })
     child.on('message', message => {
-      if (message.type === 'observed') observed()
       if (message.type === 'result') result(message.owner)
     })
     const exited = new Promise(resolve => child.on('exit', code => resolve({ code, stderr })))
-    return { child, sawOldOwner, outcome, exited }
+    return { child, outcome, exited }
   }
   const a = launch(), b = launch()
-  await Promise.all([a.sawOldOwner, b.sawOldOwner])
+  const deadline=Date.now()+5000
+  while(![a,b].every(x=>existsSync(barrier+'.'+x.child.pid+'.observed'))) {
+    assert.ok(Date.now()<deadline,'Both processes must reach the recovery barrier')
+    await new Promise(resolve=>setTimeout(resolve,10))
+  }
   writeFileSync(barrier, 'go') // Both contenders have already inspected the same owner.
   const owners = await Promise.all([a.outcome, b.outcome])
   assert.equal(owners.filter(Boolean).length, 1)

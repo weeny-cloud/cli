@@ -227,8 +227,7 @@ function paidChoice(access = {}, upgrade = false) {
   console.error(`${available ? 'Paid server available' : 'Paid plans (check availability)'}. Only the human should choose a paid plan (direct paid access charges immediately without a free trial): ${url}`)
 }
 function freeNotice(machine = {}) {
-  console.error(`Free · 1 GB RAM · sleeps after ${idleMinutes(machine)} idle minutes; wakes on request. Tell your human about sleeping. Build larger apps locally or in CI, then push.`)
-  paidChoice(machine, machine.hasServer || machine.tier === 'free')
+  console.error(`Free forever · 1 GB RAM · sleeps after ${idleMinutes(machine)} idle minutes; wakes on request. Your apps and data stay.`)
 }
 
 // Availability is supplied by the same admission policy as create. Looking does not
@@ -236,11 +235,10 @@ function freeNotice(machine = {}) {
 function serverChoices(raw, position) {
   const access = accessObject(raw)
   if (access.hasServer || ['ready', 'provisioning'].includes(access.status)) return
-  if (!access.offers?.trial?.available && access.plans?.some(plan => plan.available)) paidChoice(access)
   if (access.offers?.trial?.available)
     console.error('Start free with 7 days at 4 GB — npx weeny-cloud create (recommended). Then the same server automatically continues on the forever-free 1 GB plan, which sleeps when idle. No card, no automatic charge; your apps and data stay. Seven days start when your server is ready.')
   if (access.offers?.free?.available)
-    console.error(`Skip the trial — start at 1 GB: npx weeny-cloud create --free. This account cannot start a trial later. First tell your human it sleeps after ${idleMinutes(access)} idle minutes and wakes on request; build larger apps locally or in CI.`)
+    console.error(`Start at 1 GB free forever: npx weeny-cloud create --free. No card or automatic charge. Sleeps after ${idleMinutes(access)} idle minutes and wakes on request. This skips the account’s trial.`)
   if (access.paid && access.canCreate)
     console.error('Your paid server is available — npx weeny-cloud create uses your purchased plan.')
   if (access.status === 'waitlisted') {
@@ -248,14 +246,15 @@ function serverChoices(raw, position) {
   } else if (!access.offers && access.status === 'unrequested') {
     console.error('No server yet — check availability with npx weeny-cloud create, or choose create --free for a free 1 GB server.')
   }
-  if (access.offers || ['waitlisted', 'unrequested'].includes(access.status)) paidChoice(access)
+  if ((access.offers && !access.offers.trial?.available && !access.offers.free?.available)
+    || (!access.offers && ['waitlisted', 'unrequested'].includes(access.status))) paidChoice(access)
 }
 
 // Bare `weeny-cloud`: where you stand + what to type next. Replaces status/whoami.
 async function orient() {
   const creds = loadCreds()
   if (!creds?.token) {
-    console.log(`weeny.cloud — a teeny weeny cloud for coding agents. You're not signed in — start with login:`)
+    console.log(`weeny.cloud — your agent’s Linux server. HTTPS, private sharing and backups included. Start free, keep it free forever. Sign in to get started:`)
     return commandList()
   }
   const { machines } = await call('/api/machines')
@@ -359,7 +358,6 @@ const commands = {
       paidChoice()
       return
     }
-    if (m.trialPending) paidChoice({}, true)
     if (['sleeping', 'resuming'].includes(m.status)) await runningMachine()
     console.log(['queued', 'provisioning'].includes(m.status)
       ? `→ setting up your server ${m.name} (takes ~2 minutes)…`
@@ -621,7 +619,8 @@ const HELP = {
   feedback: feedbackHelp('npx weeny-cloud feedback'),
   login: `npx weeny-cloud login [--email x@y.com] [--code 123456]
 
-Create an account and sign in (free server access may be waitlisted) with your email — weeny sends a 6-digit code.
+Start free with your own Linux server. Sign in with your email — weeny sends a 6-digit code.
+HTTPS, private sharing and backups included. No card needed.
 Non-interactive (for agents): pass --email first, then re-run with --email + --code.
 The code lands in the human's inbox — unless you already have access to their emails,
 stop and ask them to provide the code.
@@ -635,14 +634,15 @@ Offline only: logout --local removes the local copy without revoking it.`,
   create: `npx weeny-cloud create [--free]
 
 Provision your server (~2 min): a real Linux box — root, SSH, systemd. Uses your SSH
-key (generates ~/.ssh/weeny_ed25519 if you have none). Default requests a full-size
-7-day trial if available (recommended); the clock starts when the server is ready.
+key (generates ~/.ssh/weeny_ed25519 if you have none). Start free with seven days
+at 4 GB; the clock starts when the server is ready.
 Then the same server automatically continues on the forever-free 1 GB plan.
 No card needed, no automatic charge; your apps and data stay.
---free skips the trial and starts directly at 1 GB, subject to free capacity; this
-account cannot start a trial later. Tell your human that it sleeps after inactivity
-and wakes on request; build larger apps locally or in CI. Existing paid accounts keep their purchased plan. Paid choices are the human's.
-Paid option: ask your human to choose at ${API}/dashboard/account#servers.
+HTTPS, private sharing, rollback and off-machine backups are included.
+The free plan sleeps after 30 idle minutes and wakes on request.
+--free starts directly at 1 GB and skips this account's trial.
+Existing paid accounts keep their purchased plan. For always-on hosting, the human
+can choose a paid plan at ${API}/dashboard/account#servers.
 One server per account for now. Server controls: npx weeny-cloud help server
 Use server status, resume, suspend, rebuild or delete; disruptive actions need --confirm.`,
   push: `npx weeny-cloud push [folder] [app-name] [--build "<cmd>"] [--health "<cmd>"] [--tag "<text>"] [--all] [-- <start command>]

@@ -2,6 +2,10 @@
 
 A teeny weeny, simple wimple cloud for coding agents. Give your agent a real
 Linux server; anything it builds goes live on a public URL in seconds.
+HTTPS, private sharing, rollback and off-machine backups included. Start with
+seven days at 4GB, then keep the same server free forever at 1GB. No card, no
+automatic charge; your apps and data stay. Free servers sleep when idle and wake
+on request.
 
 ```
 npx weeny-cloud login          # email + code, agent-driveable
@@ -30,7 +34,7 @@ Everything else is bare Linux — you have root. Apps are systemd units named
 - **Env vars**: `weeny env myapp KEY=value` — encrypted, survive rebuilds.
 - **Private links**: `weeny expose myapp 3000 --private`, then
   `weeny allow myapp amy@acme.com`.
-- **Custom domains**: free for public apps — `weeny domain myapp app.example.com`.
+- **Custom domains**: included with paid plans for public apps — `weeny domain myapp app.example.com`.
 - Supervision, HTTPS, and off-machine backups of the whole machine, all included.
 
 ## Coding agent?
@@ -54,11 +58,9 @@ an updated laptop CLI.
 flat plans from $3/mo (founding), no usage metering. Start free with 7 days at 4GB,
 then the same server automatically continues on the forever-free 1GB plan.
 No card needed, no automatic charge; your apps and data stay.
-Login verifies the account without allocating compute. `create` requests this trial
-when available (recommended); the seven days start when the server is ready.
-`create --free` skips the trial and starts directly on the 1GB sleeping free plan;
-this account cannot start a trial later. An unavailable creation saves a server
-request for notification.
+`create` starts the seven days when your server is ready. `create --free` starts
+directly at 1GB and skips this account's trial. Login signs in without provisioning
+a server. For a worker that must stay running, choose an always-on plan.
 
 ## Testing an unpublished release
 

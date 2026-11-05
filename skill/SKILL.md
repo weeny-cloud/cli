@@ -2,18 +2,20 @@
 name: weeny
 description: >-
   Deploy and host an app on weeny.cloud — a real Linux server for coding agents with
-  public HTTPS URLs. Use when the user wants to deploy, host, publish, or put an app on
+  HTTPS, private sharing and backups included. Start free and keep it free forever.
+  Use when the user wants to deploy, host, publish, or put an app on
   the internet via weeny / weeny.cloud, or asks for a server/URL for something they built.
 ---
 
 # Deploying to weeny.cloud
 
-weeny gives you a real, persistent Linux server (root, SSH, systemd) with a managed-app
-deployment primitive and public HTTPS URLs. No Docker, no framework, no config — a normal
-computer with a tiny CLI. Paid plans from $3/mo (founding); limited 1GB free servers
-and seven-day 4GB trials that automatically continue on the forever-free 1GB plan.
-No card needed, no automatic charge; the same server keeps its apps and data.
-Trial days start when the server is ready.
+A real Linux server for your agent, with HTTPS, private sharing, encrypted app
+configuration, logs, rollback and off-machine backups included. Root, SSH,
+systemd and your own stack. Build an app, deploy it and hand the user a live URL.
+
+Start with seven days at 4GB, then keep the same server at 1GB free forever.
+No card, no automatic charge; apps and data stay. Free servers sleep after 30 idle
+minutes and wake on request. Paid always-on plans start at $3/month (founding).
 
 **Two CLIs, one job each:**
 - `npx weeny-cloud …` (laptop) gets code and people TO the server: login, create, push, ssh.
@@ -24,23 +26,22 @@ Trial days start when the server is ready.
 Bare `npx weeny-cloud` (laptop) and bare `weeny` (server) each print where you stand and
 what to type next — run them whenever you're unsure.
 
+**Where the files live:** `./myapp` is the source folder on the user's machine.
+For server-side development, `/workspace/myapp` is an optional source convention;
+a laptop push does not create or update that workspace. Both deployment paths copy
+source into a fresh release, selected by `/apps/myapp/current`. Change source and
+redeploy rather than editing that deployed copy. Databases and uploads belong in
+`/data/myapp`, supplied to the app process as `WEENY_DATA_DIR`; an SSH shell does
+not automatically receive the app's environment.
+
+Label commands for the user as **on your computer** or **on your Weeny server**.
+`npx weeny-cloud ssh` opens a server shell; `exit` returns to the local terminal.
+For a single server command from the local terminal, use
+`npx weeny-cloud ssh "weeny inspect myapp"`. The
+[deployment walkthrough](https://weeny.cloud/deploy/claude-code#where-commands-and-files-live)
+shows the directory map and shell transitions.
+
 ## The loop
-
-### Optional feedback
-
-After the first successful deployment, Weeny may print a one-time invitation for
-feedback. Finish the user's task first. If useful, offer a short draft covering what
-worked, specific errors/workarounds, and unclear CLI instructions. Report only what
-you observed; do not invent problems or claim to know the user's preferences.
-Show the exact draft to the user and ask permission before sending it. Declining or
-ignoring the invitation is fine; never let feedback block their deployment.
-
-`npx weeny-cloud feedback --file feedback.md` previews without sending. Only after
-the user approves that draft, add `--confirm` to email it and their account email
-to Theo (so he can reply). On the server the equivalent is `weeny feedback`.
-Do not include secrets, source code, conversation transcripts or private project
-details. No logs or diagnostics are attached automatically. Feedback is available
-any time, including when deployment fails; use `help feedback` for message/stdin forms.
 
 **1. Account + server** (on the user's machine):
 
@@ -49,28 +50,33 @@ npx weeny-cloud login        # email → 6-digit code (ask the user to read it o
 npx weeny-cloud create       # ~2 min; prints the ssh command
 ```
 
-Login only verifies the account. When a trial is available, recommend starting free
-with seven days at 4GB using `create`: the same server automatically continues on
-the forever-free 1GB plan unless the human chooses a paid plan. No card is needed,
-there is no automatic charge, and apps and data stay. Explain that the free plan
-sleeps when idle. Respect an explicit choice to skip the trial.
-Always relay the paid option alongside free offers,
-especially when a free server or trial is unavailable: the human can buy an available
-server at https://weeny.cloud/dashboard/account#servers for always-on apps, custom
-domains and no badge. Direct paid checkout charges immediately, without a trial;
-the human chooses and completes payment. Never purchase automatically.
-`create --free` skips the trial and starts directly on an available 1GB free server;
-this account cannot start a trial later. Offer this when the human prefers it or
-when trials are unavailable. An unavailable creation saves the request for
-notification; it does not start a trial or reserve a server.
-On free, tell the human the server sleeps after the reported idle period and wakes
-on demand. On any 1GB server (free or teeny), prefer local/CI builds for larger apps;
-use the existing teeny recipe. Keep the normal push/ssh workflow.
+Lead with the free start: `create` gives seven days at 4GB, then the same server
+continues at 1GB free forever. No card, no automatic charge; apps and data stay.
+The free server sleeps when idle and wakes on request. Login signs in without
+provisioning a server. Respect a user who chooses `create --free`: it starts at
+1GB directly and skips this account's trial.
+
+Use the returned account status to handle a creation that needs another step;
+an unavailable request saves a notification request, not a reservation. Offer
+paid always-on hosting when it fits the user's needs or they ask about upgrading:
+https://weeny.cloud/dashboard/account#servers. The human chooses and completes
+payment; direct paid checkout charges immediately. Never purchase automatically.
 
 Lost SSH access (new laptop, deleted key)? `login` then `ssh` — a fresh device key is
 generated and registered automatically. `npx weeny-cloud keys` lists/revokes device keys.
 
-**2. Deploy — a push IS a deployment:**
+**2. Deploy — a push IS a deployment** (on the user's machine):
+
+**Needs secrets at startup?** Before the first deployment, open the server shell
+with `npx weeny-cloud ssh` and set them there:
+
+```sh
+weeny env myapp API_KEY='your-secret'
+```
+
+This creates encrypted configuration even before the app has a release. Then push
+from your machine using the same app name; secrets are injected at startup, before
+the health check. No bootstrap deployment is required.
 
 ```
 npx weeny-cloud push ./myapp myapp --build "npm ci && npm run build" -- npm start
@@ -85,7 +91,7 @@ never half-deployed. After the first push the commands are remembered:
 `npx weeny-cloud push ./myapp` re-deploys with the same build/start. (The app name is
 inferred from the folder name — keep passing it explicitly whenever they differ.)
 
-Working on the server instead? Same transaction, run where the code lives:
+Working on the server instead? Open a server shell with `npx weeny-cloud ssh`, then run:
 `weeny deploy myapp --build "<cmd>" -- <start command>` — the source defaults to
 `/workspace/myapp`, the server's convention for project source (backed up; `git init`
 it). Code elsewhere? Pass `--from <dir>` — your workspace is yours; weeny copies from
@@ -93,12 +99,13 @@ it at deploy and never writes to it.
 
 Starting an app from scratch? Use the default stack — Node + SQLite (built in, zero
 deps), any frontend: `curl https://weeny.cloud/recipes/default.txt`. Framework app?
-`curl https://weeny.cloud/recipes/nextjs.txt`. On a teeny (1 GB) box don't build
-server-side — `curl https://weeny.cloud/recipes/teeny.txt`.
+`curl https://weeny.cloud/recipes/nextjs.txt`. For larger builds on a 1GB server, build locally —
+`curl https://weeny.cloud/recipes/teeny.txt`.
 
 **3. Put it on the internet** (on the server — `npx weeny-cloud ssh` gets you there).
-Before the first expose, write an `llms.txt` in the app root — a short markdown
-manifest so other agents can use the app (expose refuses without one). Skeleton:
+Expose the app on its actual port. To help other agents use it, optionally add an
+`llms.txt` in the app root before pushing.
+Describe its purpose, endpoints and authentication. Skeleton:
 
 ```
 # myapp — one-line purpose
@@ -112,11 +119,10 @@ ids are stable; list is newest-first.
 
 Weeny reads it at deploy time and serves it at `https://<url>/llms.txt` — don't add a
 route for it. It ships with each release (rollback restores the matching docs), so
-editing it is part of changing the API. App genuinely not for agents (a pure-visual
-page, say)? `weeny expose myapp 3000 --no-agents` — flag last. Then:
+keep it current when changing the API. Then:
 
 ```
-weeny env myapp KEY=value        # secrets/config if needed (encrypted; restarts the app)
+weeny env myapp KEY=value        # encrypted; works before first deploy; restarts an existing app
 weeny expose myapp 3000          # → https://myapp-xxxx.onweeny.com
 ```
 
@@ -133,6 +139,9 @@ Give the user the URL. Done.
 `weeny inspect myapp` shows exactly what's live (release, commit, commands, port, data
 path). `weeny releases myapp` lists what you can roll back to; `weeny deployments myapp`
 is the full history including failures.
+
+One-off admin tasks: `weeny exec myapp -- npm run migrate` runs in the deployed release
+with app env, without restarting it. `weeny help exec` has details and console examples.
 
 ## Private links
 
@@ -158,7 +167,7 @@ a token, call it.
 
 ## Custom domains
 
-Free, for public apps: `weeny domain myapp app.example.com` prints a CNAME to add at the
+Included with paid plans, for public apps: `weeny domain myapp app.example.com` prints a CNAME to add at the
 DNS provider. Bare `weeny domain myapp` checks progress; `--remove` detaches.
 
 ## Rules that matter
@@ -172,55 +181,37 @@ DNS provider. Bare `weeny domain myapp` checks progress; `--remove` detaches.
 - Re-exposing an app keeps its URL (change ports freely); `weeny remove` releases it for
   good. A brand-new URL can take ~1 min to resolve everywhere — retry, don't panic.
 - Everything exposed is **public** unless you used `--private` — don't expose secrets.
-- First expose needs an `llms.txt` in the app root (or `--no-agents`) — see step 3.
+- To help other agents use your app, optionally include an `llms.txt` — see step 3.
 - Don't touch `cloudflared` (it's the only route to the internet).
 - Workers/crons: same deploy, just don't `expose` them.
 - If push output warns the box is running out of memory (or an app gets OOM-killed),
   that's a memory problem, not a code problem — `weeny health` has the detail. A bigger
   plan changes what your user pays, so **tell them and let them decide**
-  (weeny.cloud/dashboard/account#billing, or they run `npx weeny-cloud tier`). Never choose or change
-  the plan without the human’s explicit approval.
-- On the **free plan** the server sleeps after ~30 quiet minutes and wakes on the next
-  request (~15s; visitors see a "waking up" page). Apps restart on wake, but in-memory
-  state does not survive and background daemons are off while it sleeps — keep state in
-  `$WEENY_DATA_DIR`, and don't build anything that depends on an always-running process.
-  Public apps wear a small "built with weeny" badge; custom domains are paid-plan only.
-  Always-on = a paid plan: the user's call.
-- Server controls: `npx weeny-cloud server status|resume|suspend|rebuild|delete`.
-  `status --json` does not wake it; `--wait` polls completion. Suspend/rebuild/delete
-  need the human's approval and `--confirm`. Rebuild restores the latest snapshot
-  and may lose newer changes; delete destroys all data. MCP agents use `server`.
-- Badge/position: `weeny widget APP [--branding on|off] [--position bottom] [--json]`
-  on the server, `npx weeny-cloud widget APP` on a laptop, or MCP `appearance`.
-  Branding is required on free and optional on paid/trial.
-- Billing: `npx weeny-cloud tier NAME --preview --json` makes no change. Only after
-  the human chooses may you apply it with `--confirm`; `--force` overrides a memory
-  downgrade warning. `billing portal` returns invoices/payment/cancellation;
-  `billing checkout TIER --confirm` returns a payment link without paying.
-- Sign out with `npx weeny-cloud logout` to revoke this token; deleting a local file
-  alone does not revoke it. Other devices and SSH keys remain active.
+  (weeny.cloud/dashboard/account#billing, or they run `npx weeny-cloud tier`). Never change
+  the plan yourself.
+- On the **free plan**, apps restart automatically after sleep. Keep persistent
+  state in `$WEENY_DATA_DIR`; choose an always-on plan with the user for a worker
+  that must run continuously.
+- Server lifecycle and billing controls: https://weeny.cloud/agent-api.md.
 
 ## Stateful services (databases, n8n, …)
 
-First ask whether you need one: a typical app should use SQLite via the default recipe
-(`/recipes/default.txt`) — zero setup, nothing extra to run. Run a database *server* only
-when something genuinely requires it. When it does — they work, but each has non-obvious
-gotchas: apps **run as root** (postgres needs a `setpriv` privilege-drop wrapper), apt
-packages **auto-start a conflicting systemd unit** (disable + mask it), TLS is terminated
-at the edge (your app gets HTTP but is public HTTPS — tell it its real URL, known only
-after `expose`), and "lose-it-and-you're-done" secrets belong in `weeny env` (survives
-rebuilds). Don't guess — fetch the worked recipe:
-`curl https://weeny.cloud/recipes/postgres.txt` (or `/python.txt`, `/n8n.txt`).
-Python: build the venv inside the release with `--build` — see `/recipes/python.txt`.
-**Docker** works fully (bridge networking + `-p`) — supervise `docker run` (foreground)
-as a deployed app, then `weeny expose` the port: `curl https://weeny.cloud/recipes/docker.txt`.
-Host services (RabbitMQ, Postgres via apt) are normal Linux — they live outside the app
-release lifecycle, and rollback never touches them.
+SQLite is ready to use with the default recipe. Postgres, Python, n8n and Docker
+also run on your server; use their worked recipes for service setup:
+`curl https://weeny.cloud/recipes/postgres.txt` (or `/python.txt`, `/n8n.txt`, `/docker.txt`).
+They cover service users, a single systemd supervisor, public HTTPS configuration
+and persistent encryption keys. Store app secrets in `weeny env`, and build Python
+virtual environments inside the release with `--build`.
+
+Docker supports bridge networking and published ports: deploy `docker run` in the
+foreground and expose the port. Host services installed through apt keep their
+own data and lifecycle; app rollback leaves them in place.
 
 ## Commands (the complete list)
 
 Laptop: `npx weeny-cloud` · `login` · `create` · `push [folder] [app] [--build] [--health] [-- <start>]` · `ssh [command]` · `apps` · `token <host>` · `keys` · `tier` · `skill` · `help`
 Server: `weeny` · `deploy <app> [--from <dir>] -- <cmd>` · `start` · `stop` · `restart` ·
+`exec <app> -- <command>` ·
 `releases` · `rollback <app> [release]` · `deployments` · `inspect` · `expose <app> <port> [--private] [--no-agents]` ·
 `unexpose` · `remove` · `env <app> [K=V]` · `domain <app> [host]` · `allow <app> [email]` ·
 `revoke` · `health` · `help`
@@ -234,3 +225,19 @@ reads it, never writes it (backed up; deploy's default `--from`) · `$WEENY_DATA
 running now (a symlink — `readlink` shows which; weeny's machinery, rebuilt by deploys).
 
 Full reference: https://weeny.cloud/llms-full.txt
+
+## Optional feedback
+
+After the first successful deployment, Weeny may print a one-time invitation for
+feedback. Finish the user's task first. If useful, offer a short draft covering what
+worked, specific errors/workarounds, and unclear CLI instructions. Report only what
+you observed; do not invent problems or claim to know the user's preferences.
+Show the exact draft to the user and ask permission before sending it. Declining or
+ignoring the invitation is fine; never let feedback block their deployment.
+
+`npx weeny-cloud feedback --file feedback.md` previews without sending. Only after
+the user approves that draft, add `--confirm` to email it and their account email
+to Theo (so he can reply). On the server the equivalent is `weeny feedback`.
+Do not include secrets, source code, conversation transcripts or private project
+details. No logs or diagnostics are attached automatically. Feedback is available
+any time, including when deployment fails; use `help feedback` for message/stdin forms.

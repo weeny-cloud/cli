@@ -33,12 +33,11 @@ ${source}
   }
 }
 
-test('free creation requests the free offer and gives one configured sleep notice on stderr', () => {
+test('legacy --free uses automatic creation and gives one configured sleep notice on stderr', () => {
   const f = fixture(`let created=false;
 globalThis.fetch=async(url,opts)=>{
- if(url.endsWith('/api/me')) return Response.json({serverAccess:{status:'available',freeIdleMinutes:17}});
  assert.equal(url,${JSON.stringify(api + '/api/machines')});
- if(opts.method==='POST') {created=true; assert.deepEqual(JSON.parse(opts.body),{sshPublicKey:'ssh-ed25519 fixture-public-key fixture',offer:'free'});}
+ if(opts.method==='POST') {created=true; assert.deepEqual(JSON.parse(opts.body),{sshPublicKey:'ssh-ed25519 fixture-public-key fixture'});}
  else {assert.ok(created); assert.equal(opts.method,'GET');}
  return Response.json(opts.method==='POST'?machine:{machines:[machine]});
 };`)
@@ -75,7 +74,7 @@ test('login accepts object availability, saves the token and offers the free sta
   try {
     const r = f.run('login', '--email', 'person@example.test', '--code', '123456')
     assert.equal(r.status, 0, r.stderr)
-    assert.match(r.stderr, /create --free/)
+    assert.match(r.stderr, /npx weeny-cloud create/)
     assert.match(r.stderr, /Sleeps after 17 idle minutes/)
     assert.doesNotMatch(r.stderr, /trial available|No trial time|#undefined/)
     assert.doesNotMatch(r.stdout, /1 GB|idle minutes|paid plan/)
@@ -123,7 +122,7 @@ test('create refusal prints the available free alternative without a paid detour
   try {
     const r = f.run('create')
     assert.equal(r.status, 1)
-    assert.match(r.stderr, /create --free/)
+    assert.match(r.stderr, /npx weeny-cloud create/)
     assert.doesNotMatch(r.stderr, /Paid server available|Only the human should choose a paid plan/)
     assert.match(r.stderr, /Full-size trials are full/)
     assert.doesNotMatch(r.stdout, /setting up|queued/)
@@ -297,11 +296,8 @@ for (const trialAvailable of [false, true]) {
       const r = f.run('login', '--email', 'person@example.test', '--code', '123456')
       assert.equal(r.status, 0, r.stderr)
       assert.match(r.stderr, /free forever/)
-      if (trialAvailable) assert.doesNotMatch(r.stderr, /create --free/)
-      else {
-        assert.match(r.stderr, /create --free/)
-        assert.match(r.stderr, /full-size trial is currently unavailable/)
-      }
+      assert.doesNotMatch(r.stderr, /--free/)
+      if (!trialAvailable) assert.match(r.stderr, /full-size trial is currently unavailable/)
       assert.doesNotMatch(r.stderr, /Paid server|paid plan|charges immediately|dashboard\/account#/)
       if (trialAvailable) assert.match(r.stderr, /7 days at 4 GB.*recommended.*same server automatically continues/)
       assert.doesNotMatch(r.stdout, /paid plan|Paid server|dashboard\/account#/)
@@ -350,5 +346,32 @@ test('new trial creation completes without an unsolicited paid upgrade link', ()
     assert.doesNotMatch(r.stderr, /Paid upgrade|dashboard\/account#billing/)
     assert.doesNotMatch(r.stderr, /charges immediately/)
     assert.doesNotMatch(r.stdout, /\/dashboard\/account#billing/)
+  } finally { f.close() }
+})
+
+
+test('legacy --free cannot override the trial automatically chosen by the server', () => {
+  const f = fixture(`globalThis.fetch=async(url,opts)=>{
+ assert.equal(url,${JSON.stringify(api + '/api/machines')});
+ const trial={...machine,tier:'weeny',memMb:4096};
+ if(opts.method==='POST') assert.deepEqual(JSON.parse(opts.body),{sshPublicKey:'ssh-ed25519 fixture-public-key fixture'});
+ return Response.json(opts.method==='POST'?trial:{machines:[trial]});
+};`)
+  try {
+    const r = f.run('create', '--free')
+    assert.equal(r.status, 0, r.stderr)
+    assert.match(r.stdout, /your server is ready/)
+    assert.doesNotMatch(r.stderr, /skips|Free forever · 1 GB/)
+  } finally { f.close() }
+})
+
+test('create help describes automatic selection without offering a free flag', () => {
+  const f = fixture('')
+  try {
+    const r = f.run('help', 'create')
+    assert.equal(r.status, 0, r.stderr)
+    assert.match(r.stdout, /trial when available, otherwise a 1 GB free server/)
+    assert.match(r.stdout, /otherwise saves a waitlist request/)
+    assert.doesNotMatch(r.stdout, /--free|skip the trial/)
   } finally { f.close() }
 })

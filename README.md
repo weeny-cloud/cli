@@ -58,11 +58,10 @@ an updated laptop CLI.
 flat plans from $3/mo (founding), no usage metering. Start free with 7 days at 4GB,
 then the same server automatically continues on the forever-free 1GB plan.
 No card needed, no automatic charge; your apps and data stay.
-`create` starts the seven days when your server is ready. Take the trial first:
-it includes the same free plan afterwards. `create --free` skips the seven days
-at 4GB and provides no extra free entitlement; use it when the trial is unavailable
-or you explicitly want to skip it. Login signs in without provisioning
-a server. For a worker that must stay running, choose an always-on plan.
+`create` automatically starts an eligible trial when available, otherwise a 1GB
+free server, otherwise saves a waitlist request. The trial starts at readiness.
+Login signs in without provisioning a server. For a worker that must stay running,
+choose an always-on plan.
 
 ## Testing an unpublished release
 

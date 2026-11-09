@@ -238,7 +238,7 @@ function serverChoices(raw, position) {
   if (access.offers?.trial?.available)
     console.error('Start free with 7 days at 4 GB — npx weeny-cloud create (recommended). Then the same server automatically continues at 1 GB free forever, which sleeps when idle. No card, no automatic charge; your apps and data stay. Seven days start when your server is ready.')
   else if (access.offers?.free?.available)
-    console.error(`The full-size trial is currently unavailable. Start at 1 GB free forever: npx weeny-cloud create --free. No card or automatic charge. Sleeps after ${idleMinutes(access)} idle minutes and wakes on request. This skips the account’s trial; wait for trial capacity if you want the seven days at 4 GB before continuing free.`)
+    console.error(`The full-size trial is currently unavailable. Start at 1 GB free forever: npx weeny-cloud create. No card or automatic charge. Sleeps after ${idleMinutes(access)} idle minutes and wakes on request.`)
   if (access.paid && access.canCreate)
     console.error('Your paid server is available — npx weeny-cloud create uses your purchased plan.')
   if (access.status === 'waitlisted') {
@@ -284,7 +284,7 @@ async function orient() {
 function commandList() {
   console.log(`
   npx weeny-cloud login            sign in — weeny emails you a code
-  npx weeny-cloud create [--free]  start with 7 days at 4 GB, then 1 GB free (~2 min)
+  npx weeny-cloud create          available trial, otherwise free, otherwise waitlist
   npx weeny-cloud push [folder]    deploy this folder to your server (re-push = new release)
   npx weeny-cloud ssh [command]    go to the server — that's where the power is
   npx weeny-cloud apps             every app you can reach — yours + shared with you
@@ -335,14 +335,7 @@ const commands = {
 
   async create() {
     if (CI_CREDS) die('CI deployment credentials use an existing server; provision it from a signed-in local session first')
-    const free = 'free' in flags
-    if (free) {
-      const me = await call('/api/me')
-      if (!me.serverAccess?.hasServer && !me.serverAccess?.paid) {
-        console.error('The trial includes the same free 1 GB plan afterwards. Starting directly at 1 GB skips your seven days at 4 GB; this account cannot take the trial later.')
-        freeNotice(me.serverAccess)
-      }
-    }
+    // Legacy --free is a harmless alias; selection now belongs to the server.
     let pub = findPublicKey()
     if (!pub) {
       profileDirectory(SSH_DIR)
@@ -351,7 +344,7 @@ const commands = {
       pub = findPublicKey()
     }
     console.log(`using SSH key: ${pub.path}`)
-    const m = await call('/api/machines', { method: 'POST', body: { sshPublicKey: pub.key, ...(free ? { offer: 'free' } : {}) } })
+    const m = await call('/api/machines', { method: 'POST', body: { sshPublicKey: pub.key } })
     if (m.unsynced?.length) die(`Device key saved, but its server could not be reached: ${m.unsynced.join(', ')}. Retry create before connecting.`)
     if (m.waitingForCapacity) {
       console.error(`Your request for ${m.name} is queued for ${m.capacityStatus === 'capacity_exhausted' ? 'server' : 'free'} capacity. Your account and approval are saved.${m.trialPending?' Your trial starts when the server is ready.':''}`)
@@ -371,7 +364,7 @@ const commands = {
       if (mine.status === 'failed') die(`setup failed: ${mine.error}`)
       if (mine.note && !notePrinted) { notePrinted = true; console.log(`\n${mine.note}\n(you can ctrl-c — we'll email you, and bare \`npx weeny-cloud\` shows progress)`) }
       if (mine.status === 'running') {
-        if (!free && mine.tier === 'free') freeNotice(mine)
+        if (mine.tier === 'free') freeNotice(mine)
         const keyPath = pub.path.replace(/\.pub$/, '')
         ensureSshConfig(mine, keyPath)   // writes the direct or tunnel ssh-config block
         const creds = loadCreds()
@@ -631,19 +624,16 @@ Use a separate folder for staging. Keep the same override in subsequent terminal
 This does not move an existing account; sign in again in the new profile.
 Sign out and revoke this token: npx weeny-cloud logout
 Offline only: logout --local removes the local copy without revoking it.`,
-  create: `npx weeny-cloud create [--free]
+  create: `npx weeny-cloud create
 
 Provision your server (~2 min): a real Linux box — root, SSH, systemd. Uses your SSH
-key (generates ~/.ssh/weeny_ed25519 if you have none). Start free with seven days
-at 4 GB; the clock starts when the server is ready.
-Then the same server automatically continues at 1 GB free forever.
+key (generates ~/.ssh/weeny_ed25519 if you have none). Automatically starts an
+eligible seven-day 4 GB trial when available, otherwise a 1 GB free server,
+otherwise saves a waitlist request. The trial starts at readiness, then the same
+server automatically continues at 1 GB free forever.
 No card needed, no automatic charge; your apps and data stay.
 HTTPS, private sharing, rollback and off-machine backups are included.
 The free plan sleeps after 30 idle minutes and wakes on request.
-Recommend the trial first: it includes the same free plan afterwards.
---free skips the seven days at 4 GB and provides no extra free entitlement. Use it
-when the trial is unavailable or you explicitly want to skip it; you cannot take
-the trial later on this account.
 Existing paid accounts keep their purchased plan. For always-on hosting, the human
 can choose a paid plan at ${API}/dashboard/account#servers.
 One server per account for now. Server controls: npx weeny-cloud help server

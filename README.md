@@ -42,16 +42,18 @@ Everything else is bare Linux — you have root. Apps are systemd units named
 `npx weeny-cloud skill` teaches Claude Code the whole flow.
 Docs for agents: https://weeny.cloud/llms.txt
 
-Once you have the skill installed, normal CLI commands check its SHA-256 against
-the hosted guide before running, at most once every 24 hours, with a three-second
-timeout. That invocation shows a notice on stderr only when an update is available,
-at most daily. Run `npx weeny-cloud@latest skill` to refresh, then have your agent
-re-read the file.
-The check never overwrites your skill or updates the server CLI. Failed or timed-out
-checks stay silent and let the command continue; later commands use the daily cache.
-CI and internal SSH relay processes skip the check.
-Existing installs are detected without reinstalling the skill; this feature requires
-an updated laptop CLI.
+Normal CLI commands check for updates at most once every 24 hours, with a shared
+three-second timeout. The published CLI checks npm for a newer stable version and
+prints a brief notice on stderr with the current/latest versions and
+`npx weeny-cloud@latest <command>` for subsequent commands. This also works in agent
+sessions without a terminal and does not require an installed skill.
+
+If you have the skill installed, the same machinery compares it with the hosted
+guide. Run `npx weeny-cloud@latest skill` to refresh it, then have your agent re-read
+the file. Neither notice installs anything or changes the server CLI.
+Failed checks stay silent and back off for a day. CI, JSON output, the explicit
+skill installer and internal SSH relay processes skip the checks. Unpublished
+staging candidates check only their staging guide, with environment-safe commands.
 
 ## Pricing
 

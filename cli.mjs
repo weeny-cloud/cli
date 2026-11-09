@@ -236,15 +236,15 @@ function serverChoices(raw, position) {
   const access = accessObject(raw)
   if (access.hasServer || ['ready', 'provisioning'].includes(access.status)) return
   if (access.offers?.trial?.available)
-    console.error('Start free with 7 days at 4 GB — npx weeny-cloud create (recommended). Then the same server automatically continues on the forever-free 1 GB plan, which sleeps when idle. No card, no automatic charge; your apps and data stay. Seven days start when your server is ready.')
-  if (access.offers?.free?.available)
-    console.error(`Start at 1 GB free forever: npx weeny-cloud create --free. No card or automatic charge. Sleeps after ${idleMinutes(access)} idle minutes and wakes on request. This skips the account’s trial.`)
+    console.error('Start free with 7 days at 4 GB — npx weeny-cloud create (recommended). Then the same server automatically continues at 1 GB free forever, which sleeps when idle. No card, no automatic charge; your apps and data stay. Seven days start when your server is ready.')
+  else if (access.offers?.free?.available)
+    console.error(`The full-size trial is currently unavailable. Start at 1 GB free forever: npx weeny-cloud create --free. No card or automatic charge. Sleeps after ${idleMinutes(access)} idle minutes and wakes on request. This skips the account’s trial; wait for trial capacity if you want the seven days at 4 GB before continuing free.`)
   if (access.paid && access.canCreate)
     console.error('Your paid server is available — npx weeny-cloud create uses your purchased plan.')
   if (access.status === 'waitlisted') {
     console.error(`Your account is ready.${position ? ` You're #${position} on the waitlist.` : ' You are waiting for a server.'} No trial time has started.`)
   } else if (!access.offers && access.status === 'unrequested') {
-    console.error('No server yet — check availability with npx weeny-cloud create, or choose create --free for a free 1 GB server.')
+    console.error('No server yet — check availability with npx weeny-cloud create. Take the seven-day 4 GB trial first, then keep the same server free forever at 1 GB.')
   }
   if ((access.offers && !access.offers.trial?.available && !access.offers.free?.available)
     || (!access.offers && ['waitlisted', 'unrequested'].includes(access.status))) paidChoice(access)
@@ -339,7 +339,7 @@ const commands = {
     if (free) {
       const me = await call('/api/me')
       if (!me.serverAccess?.hasServer && !me.serverAccess?.paid) {
-        console.error('Starting directly at 1 GB skips the trial; this account cannot start a trial later.')
+        console.error('The trial includes the same free 1 GB plan afterwards. Starting directly at 1 GB skips your seven days at 4 GB; this account cannot take the trial later.')
         freeNotice(me.serverAccess)
       }
     }
@@ -636,11 +636,14 @@ Offline only: logout --local removes the local copy without revoking it.`,
 Provision your server (~2 min): a real Linux box — root, SSH, systemd. Uses your SSH
 key (generates ~/.ssh/weeny_ed25519 if you have none). Start free with seven days
 at 4 GB; the clock starts when the server is ready.
-Then the same server automatically continues on the forever-free 1 GB plan.
+Then the same server automatically continues at 1 GB free forever.
 No card needed, no automatic charge; your apps and data stay.
 HTTPS, private sharing, rollback and off-machine backups are included.
 The free plan sleeps after 30 idle minutes and wakes on request.
---free starts directly at 1 GB and skips this account's trial.
+Recommend the trial first: it includes the same free plan afterwards.
+--free skips the seven days at 4 GB and provides no extra free entitlement. Use it
+when the trial is unavailable or you explicitly want to skip it; you cannot take
+the trial later on this account.
 Existing paid accounts keep their purchased plan. For always-on hosting, the human
 can choose a paid plan at ${API}/dashboard/account#servers.
 One server per account for now. Server controls: npx weeny-cloud help server

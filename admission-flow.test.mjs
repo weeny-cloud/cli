@@ -288,7 +288,7 @@ test('create does not report a device ready when its existing server key sync fa
 })
 
 for (const trialAvailable of [false, true]) {
-  test(`login leads with free access when trial availability is ${trialAvailable}`, () => {
+  test(`login recommends the trial first when trial availability is ${trialAvailable}`, () => {
     const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/auth/verify')});
  return Response.json({status:'ok',email:'person@example.test',token:'new-token',serverAccess:{status:'available',freeIdleMinutes:17,offers:{trial:{available:${trialAvailable}},free:{available:true}},plans:[{tier:'teeny',available:true}]}});
@@ -297,9 +297,13 @@ for (const trialAvailable of [false, true]) {
       const r = f.run('login', '--email', 'person@example.test', '--code', '123456')
       assert.equal(r.status, 0, r.stderr)
       assert.match(r.stderr, /free forever/)
-      assert.match(r.stderr, /create --free/)
+      if (trialAvailable) assert.doesNotMatch(r.stderr, /create --free/)
+      else {
+        assert.match(r.stderr, /create --free/)
+        assert.match(r.stderr, /full-size trial is currently unavailable/)
+      }
       assert.doesNotMatch(r.stderr, /Paid server|paid plan|charges immediately|dashboard\/account#/)
-      if (trialAvailable) assert.ok(r.stderr.indexOf('Start free with 7 days at 4 GB') < r.stderr.indexOf('Start at 1 GB free forever'))
+      if (trialAvailable) assert.match(r.stderr, /7 days at 4 GB.*recommended.*same server automatically continues/)
       assert.doesNotMatch(r.stdout, /paid plan|Paid server|dashboard\/account#/)
     } finally { f.close() }
   })

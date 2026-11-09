@@ -23,7 +23,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
     if (!m) throw new Error(id ? 'No such server' : 'Specify --id from: npx weeny-cloud server status --json')
     return m
   }
-  const publicMachine = ({ id, name, status, tier, diskMb, note, error, apps }) => ({ id, name, status, tier, diskMb, note, error, apps })
+  const publicMachine = ({ id, name, status, tier, diskMb, note, error, apps, health, alerts }) => ({ id, name, status, tier, diskMb, note, error, apps, health, alerts })
   return {
     async server(argv) {
       const { args, options } = parse(argv, ['id'], ['confirm','wait'])

@@ -92,3 +92,14 @@ test('shows catalogue disk allowances separately from the existing server and re
  assert.match(f.lines.at(-1),/resulting disk 30 GiB/)
  assert.equal(f.calls.filter(c=>c.path==='/api/billing/tier'&&!c.body.preview).length,0)
 })
+
+test('structured server status retains measured health and resource advice without credentials', async () => {
+  const f = fixture()
+  f.machine.health = { memUsedMb: 960, memTotalMb: 1024 }
+  f.machine.alerts = [{ kind: 'memory', recommendation: { tier: 'weeny' } }]
+  await f.commands.server(['status', '--json'])
+  const output = JSON.parse(f.lines.pop()).machines[0]
+  assert.deepEqual(output.health, f.machine.health)
+  assert.deepEqual(output.alerts, f.machine.alerts)
+  assert.equal(output.tunnelSecret, undefined)
+})

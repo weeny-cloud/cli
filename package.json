@@ -29,6 +29,7 @@
     "environment.mjs",
     "profile.mjs",
     "ssh-command.mjs",
+    "resource-notices.mjs",
     "skill-updates.mjs",
     "skill-lock.mjs",
     "README.md",

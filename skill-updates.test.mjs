@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { installSkill, maybeCheckSkillUpdate, renderSkill, skillPath } from './skill-updates.mjs'
+import { installSkill, maybeCheckUpdates, renderSkill, skillPath } from './skill-updates.mjs'
 
 const DAY = 86400000
 const old = '---\nname: weeny\ndescription: Deploy apps\n---\nOld guide: npx weeny-cloud push\n'
@@ -43,14 +43,14 @@ test('install records source and installed hashes, isolates staging, and clears 
   assert.equal(f.state().checkedAt, 1000)
   assert.equal(existsSync(join(f.home, '.claude')), false)
   const net = requests(() => { throw Error('must not check immediately after install') }), notices = []
-  await maybeCheckSkillUpdate(f.env, f.cli, { ...net, home: f.home, now: 1001, notify: text => notices.push(text) })
+  await maybeCheckUpdates(f.env, f.cli, { ...net, home: f.home, now: 1001, notify: text => notices.push(text) })
   assert.equal(net.calls.length, 0); assert.equal(notices.length, 0)
 })
 
 test('legacy installations get a cached daily notice without being overwritten', async t => {
   const f = fixture(t); f.writeSkill(old)
   const notices = [], net = requests(async () => new Response(latest)), now = Date.now()
-  const run = time => maybeCheckSkillUpdate(f.env, f.cli, { ...net, home: f.home, now: time, notify: text => notices.push(text) })
+  const run = time => maybeCheckUpdates(f.env, f.cli, { ...net, home: f.home, now: time, notify: text => notices.push(text) })
   await run(now)
   assert.equal(notices.length, 1)
   assert.match(notices[0], /skill, then re-read/)
@@ -65,11 +65,11 @@ test('legacy installations get a cached daily notice without being overwritten',
 
 test('missing skills do no work; corrupt caches recover and offline attempts back off daily', async t => {
   const f = fixture(t), net = requests(async () => { throw Error('offline') }), now = Date.now()
-  await maybeCheckSkillUpdate(f.env, f.cli, { ...net, home: f.home })
+  await maybeCheckUpdates(f.env, f.cli, { ...net, home: f.home })
   assert.equal(net.calls.length, 0); assert.equal(existsSync(f.cache), false)
   f.writeSkill(old); writeFileSync(f.cache, '{broken')
-  await maybeCheckSkillUpdate(f.env, f.cli, { ...net, home: f.home, now })
-  await maybeCheckSkillUpdate(f.env, f.cli, { ...net, home: f.home, now: now + 100 })
+  await maybeCheckUpdates(f.env, f.cli, { ...net, home: f.home, now })
+  await maybeCheckUpdates(f.env, f.cli, { ...net, home: f.home, now: now + 100 })
   assert.equal(net.calls.length, 1)
   assert.equal(readFileSync(f.path, 'utf8'), renderSkill(old, f.env, f.cli))
 })
@@ -78,7 +78,7 @@ test('a cache from another origin cannot produce an update notice', async t => {
   const f = fixture(t); f.writeSkill(old)
   writeFileSync(f.cache, JSON.stringify({ api: 'https://weeny.cloud', renderer: f.cli, latestHash: 'different', checkedAt: Date.now() }))
   const net = requests(async () => new Response(old)), notices = []
-  await maybeCheckSkillUpdate(f.env, f.cli, { ...net, home: f.home, notify: text => notices.push(text) })
+  await maybeCheckUpdates(f.env, f.cli, { ...net, home: f.home, notify: text => notices.push(text) })
   assert.equal(notices.length, 0)
   assert.equal(net.calls.length, 1); assert.equal(f.state().api, f.env.api)
 })
@@ -89,8 +89,8 @@ test('local customizations alone do not trigger a notice or get overwritten', as
   writeFileSync(f.path, readFileSync(f.path, 'utf8') + 'My local notes\n')
   const net = requests(async () => new Response(latest)), notices = []
   const opts = { ...net, home: f.home, notify: text => notices.push(text) }
-  await maybeCheckSkillUpdate(f.env, f.cli, { ...opts, now: now + DAY })
-  await maybeCheckSkillUpdate(f.env, f.cli, { ...opts, now: now + DAY + 1 })
+  await maybeCheckUpdates(f.env, f.cli, { ...opts, now: now + DAY })
+  await maybeCheckUpdates(f.env, f.cli, { ...opts, now: now + DAY + 1 })
   assert.equal(notices.length, 0)
   assert.match(readFileSync(f.path, 'utf8'), /My local notes/)
 })
@@ -99,7 +99,7 @@ test('a refresh serializes its guide and cache commit after an in-flight check',
   const f = fixture(t); f.writeSkill(old)
   let respond
   const notices = []
-  const checking = maybeCheckSkillUpdate(f.env, f.cli, { home: f.home,
+  const checking = maybeCheckUpdates(f.env, f.cli, { home: f.home,
     fetchImpl: () => new Promise(resolve => { respond = resolve }), notify: text => notices.push(text) })
   let refreshed = false
   const refreshing = installSkill(f.env, f.cli, { home: f.home, fetchImpl: async () => new Response(latest) })
@@ -127,7 +127,7 @@ test('production refresh uses its existing Claude path and latest npm command in
   assert.equal(path, join(f.home, '.claude', 'skills', 'weeny', 'SKILL.md'))
   assert.equal(readFileSync(path, 'utf8'), old)
   const net = requests(async () => new Response(latest)), notices = []
-  const run = time => maybeCheckSkillUpdate(env, f.cli, { ...net, home: f.home, now: time, notify: text => notices.push(text) })
+  const run = time => maybeCheckUpdates(env, f.cli, { ...net, home: f.home, now: time, notify: text => notices.push(text) })
   await run(now + DAY); await run(now + DAY + 1)
   assert.equal(notices.length, 1)
   assert.match(notices[0], /npx weeny-cloud@latest skill/)
@@ -139,10 +139,10 @@ test('concurrent commands share a single in-flight check and notice', async t =>
   let respond
   const net = requests(() => new Promise(resolve => { respond = resolve })), notices = []
   const opts = { ...net, home: f.home, notify: text => notices.push(text) }
-  const checking = maybeCheckSkillUpdate(f.env, f.cli, opts)
-  await maybeCheckSkillUpdate(f.env, f.cli, opts)
+  const checking = maybeCheckUpdates(f.env, f.cli, opts)
+  await maybeCheckUpdates(f.env, f.cli, opts)
   assert.equal(net.calls.length, 1)
   respond(new Response(latest)); await checking
-  await maybeCheckSkillUpdate(f.env, f.cli, opts)
+  await maybeCheckUpdates(f.env, f.cli, opts)
   assert.equal(net.calls.length, 1); assert.equal(notices.length, 1)
 })

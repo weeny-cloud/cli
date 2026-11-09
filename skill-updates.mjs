@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path'
 import { trySkillLock, releaseSkillLock } from './skill-lock.mjs'
 
 const DAY = 24 * 60 * 60 * 1000
+const CURRENT_VERSION = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version
+const LATEST_CLI_URL = 'https://registry.npmjs.org/weeny-cloud/latest'
 const hash = text => createHash('sha256').update(text).digest('hex')
 const quote = value => `'${String(value).replace(/'/g, `'\\''`)}'`
 const readJson = path => { try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return {} } }
@@ -32,10 +34,10 @@ export function renderSkill(source, env, cliPath) {
     .replaceAll('https://weeny.cloud', env.api)
 }
 
-async function fetchSkill(env, fetchImpl, timeoutMs) {
-  // No credentials or redirects: the guide is public and stays on the selected origin.
-  const response = await fetchImpl(`${env.api}/weeny-skill.md`, { redirect: 'error', signal: AbortSignal.timeout(timeoutMs) })
-  if (!response.ok || !response.body) throw new Error('could not fetch the skill')
+async function fetchPublicText(url, fetchImpl, timeoutMs, maxBytes) {
+  // Public metadata only: no credentials, redirects or unbounded response bodies.
+  const response = await fetchImpl(url, { redirect: 'error', signal: AbortSignal.timeout(timeoutMs) })
+  if (!response.ok || !response.body) throw new Error('could not fetch update metadata')
   const reader = response.body.getReader(), chunks = []
   let length = 0
   try {
@@ -43,14 +45,39 @@ async function fetchSkill(env, fetchImpl, timeoutMs) {
       const { done, value } = await reader.read()
       if (done) break
       length += value.length
-      if (length > 256 * 1024) throw new Error('skill response is too large')
+      if (length > maxBytes) throw new Error('update response is too large')
       chunks.push(value)
     }
   } finally { await reader.cancel().catch(() => {}) }
-  const source = Buffer.concat(chunks).toString('utf8')
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+async function fetchSkill(env, fetchImpl, timeoutMs) {
+  const source = await fetchPublicText(`${env.api}/weeny-skill.md`, fetchImpl, timeoutMs, 256 * 1024)
   const frontmatter = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1]
   if (!frontmatter || !/^name:\s*weeny\s*$/m.test(frontmatter)) throw new Error('invalid weeny skill response')
   return source
+}
+
+// npm's latest stable version is compared numerically, never lexicographically.
+// Invalid/prerelease metadata cannot produce a command or an upgrade notice.
+function versionParts(version) {
+  if (typeof version !== 'string' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) return null
+  const parts = version.split('.').map(Number)
+  return parts.every(Number.isSafeInteger) ? parts : null
+}
+function newerVersion(latest, current) {
+  const next = versionParts(latest), installed = versionParts(current)
+  if (!next || !installed) return false
+  for (let i = 0; i < 3; i++) {
+    if (next[i] !== installed[i]) return next[i] > installed[i]
+  }
+  return false
+}
+async function fetchCliVersion(fetchImpl) {
+  const metadata = JSON.parse(await fetchPublicText(LATEST_CLI_URL, fetchImpl, 3000, 64 * 1024))
+  if (metadata.name !== 'weeny-cloud' || !versionParts(metadata.version)) throw new Error('invalid CLI version metadata')
+  return metadata.version
 }
 
 function options(env, cliPath, home) {
@@ -82,47 +109,60 @@ export async function installSkill(env, cliPath, { home, fetchImpl = fetch, now 
     catch (error) { if (!['EACCES', 'EPERM', 'EROFS'].includes(error.code)) throw error }
     atomicWrite(opts.skill, skill, 0o644)
     // Cache commits share the check's lock. An unwritable cache never prevents installation.
-    if (lock) try { save(opts.cache, { api: opts.api, renderer: opts.renderer, installedAt: now, installedHash, sourceHash,
+    if (lock) try { save(opts.cache, { cli: readState(opts).cli, api: opts.api, renderer: opts.renderer, installedAt: now, installedHash, sourceHash,
       latestHash: installedHash, latestSourceHash: sourceHash, checkedAt: now, notifiedAt: 0 }) } catch {}
   } finally { releaseSkillLock(lock) }
   return opts.skill
 }
 
-export async function maybeCheckSkillUpdate(env, cliPath, { home, now = Date.now(), notify = console.error, fetchImpl = fetch } = {}) {
+export async function maybeCheckUpdates(env, cliPath, { home, now = Date.now(), notify = console.error, fetchImpl = fetch, currentVersion = CURRENT_VERSION } = {}) {
   const opts = options(env, cliPath, home)
+  const installedSkill = () => { try { return readFileSync(opts.skill) } catch { return null } }
+  const due = timestamp => !Number.isFinite(timestamp) || now < timestamp || now - timestamp >= DAY
+  const checkGuide = !!installedSkill()
+  // Unpublished staging candidates must not be redirected to a production npm CLI.
+  const checkCli = env.production && !!versionParts(currentVersion)
+  if (!checkGuide && !checkCli) return
   let lock
   try {
-    // Missing skills do not need a check or a profile directory.
-    readFileSync(opts.skill)
     lock = trySkillLock(opts.dir, { now })
     if (!lock) return
-    // Read under the lock so concurrent commands cannot duplicate requests or notices.
+    // Both nudges share the same lock, cache and daily failed-attempt backoff.
     let state = readState(opts)
-    if (!Number.isFinite(state.checkedAt) || now < state.checkedAt || now - state.checkedAt >= DAY) {
-      // Claim the daily attempt before fetching, including failed/offline attempts.
+    let cli = state.cli && typeof state.cli === 'object' && !Array.isArray(state.cli) ? state.cli : {}
+    const guideDue = checkGuide && due(state.checkedAt), cliDue = checkCli && due(cli.checkedAt)
+    if (guideDue || cliDue) {
       const checkId = randomUUID()
-      state = { ...state, api: opts.api, renderer: opts.renderer, checkedAt: now, checkId }
+      state = { ...state, api: opts.api, renderer: opts.renderer, checkId,
+        ...(guideDue ? { checkedAt: now } : {}),
+        cli: { ...cli, ...(cliDue ? { checkedAt: now } : {}) } }
       save(opts.cache, state)
-      let source
-      try { source = await fetchSkill(env, fetchImpl, 3000) } catch {}
+      // Fetch together so two optional checks still have a single three-second wait.
+      const [guide, latest] = await Promise.all([
+        guideDue ? fetchSkill(env, fetchImpl, 3000).catch(() => null) : null,
+        cliDue ? fetchCliVersion(fetchImpl).catch(() => null) : null,
+      ])
       state = readState(opts)
-      // Discard the result if this profile's state was replaced while fetching.
       if (state.checkId !== checkId) return
-      if (source) {
-        state = { ...state, latestHash: hash(renderSkill(source, env, cliPath)), latestSourceHash: hash(source) }
-        save(opts.cache, state)
-      }
+      if (guide) state = { ...state, latestHash: hash(renderSkill(guide, env, cliPath)), latestSourceHash: hash(guide) }
+      if (latest) state = { ...state, cli: { ...state.cli, latestVersion: latest } }
+      if (guide || latest) save(opts.cache, state)
     }
-    // Legacy installs have no metadata: compare their actual bytes with the fetched guide.
-    const installedHash = hash(readFileSync(opts.skill))
-    const differs = state.latestHash && installedHash !== state.latestHash
+    // Legacy installs have no metadata: compare their actual bytes with the guide.
+    const installed = checkGuide && installedSkill()
+    const differs = installed && state.latestHash && hash(installed) !== state.latestHash
       && (!state.sourceHash || state.sourceHash !== state.latestSourceHash)
-    const notifiedAt = Number.isFinite(state.notifiedAt) && state.notifiedAt <= now ? state.notifiedAt : 0
-    if (differs && (!notifiedAt || now - notifiedAt >= DAY)) {
+    if (differs && (!state.notifiedAt || due(state.notifiedAt))) {
       state.notifiedAt = now
       save(opts.cache, state)
       notify(`Weeny guide update available — run ${skillCommand(env, cliPath)} skill, then re-read ${opts.skill}. This updates the guide, not the server CLI.`)
     }
-  } catch {} // Missing skills, read-only profiles and corrupt caches stay quiet.
+    cli = state.cli ?? {}
+    if (checkCli && newerVersion(cli.latestVersion, currentVersion) && (!cli.notifiedAt || due(cli.notifiedAt))) {
+      state.cli = { ...cli, notifiedAt: now }
+      save(opts.cache, state)
+      notify(`Weeny CLI update available: ${currentVersion} → ${cli.latestVersion}. Use npx weeny-cloud@latest <command> for subsequent commands.`)
+    }
+  } catch {} // Offline checks, read-only profiles and corrupt caches never block work.
   finally { releaseSkillLock(lock) }
 }

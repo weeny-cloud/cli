@@ -217,6 +217,30 @@ syncBuiltinESMExports();process.on('exit',()=>{assert.ok(finalized);assert.equal
   })
 }
 
+for (const supported of [true, false]) {
+  test(`push forwards lifecycle commands literally or rejects an old server before upload (${supported})`, () => {
+    const stop = 'printf \'%s\\n\' "$WEENY_DATA_DIR"; ./stop.sh'
+    const quoted = value => "'" + value.replace(/'/g, "'\\''") + "'"
+    const f = fixture(`let uploaded=false,finalized=false;
+globalThis.fetch=async()=>Response.json({machines:[{...machine,tier:'weeny',memMb:4096}]});
+child.execFileSync=(command,args)=>{
+ if(command==='git') throw Error('No git metadata');
+ if(command==='rsync') {uploaded=true;return '';}
+ assert.equal(command,'ssh');const line=args.at(-1);
+ if(line==='weeny _deploy-begin fixture') return JSON.stringify({deploymentId:'deploy-123',incomingDir:'/apps/fixture/incoming/deploy-123',defaults:{start:['node','server.js']},capabilities:{lifecycleCommands:${supported}}});
+ assert.ok(uploaded);assert.ok(line.includes(${JSON.stringify('--stop ' + quoted(stop))}));
+ assert.ok(line.includes("--startup-timeout '120'"));finalized=true;return '';
+};
+syncBuiltinESMExports();process.on('exit',()=>{assert.equal(uploaded,${supported});assert.equal(finalized,${supported});});`)
+    try {
+      const app = join(f.dir, 'fixture'); mkdirSync(app)
+      const r = f.run('push', app, 'fixture', '--stop', stop, '--startup-timeout', '120')
+      assert.equal(r.status, supported ? 0 : 1, r.stderr)
+      if (!supported) assert.match(r.stderr, /updated Weeny CLI/)
+    } finally { f.close() }
+  })
+}
+
 test('legacy approved login does not assume an existing account needs a server', () => {
   const f = fixture(`globalThis.fetch=async()=>Response.json({status:'ok',email:'person@example.test',token:'returning-token',serverAccess:'approved'});`)
   try {

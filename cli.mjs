@@ -404,7 +404,7 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     const head = dd >= 0 ? argvAll.slice(0, dd) : argvAll
     const startArgv = dd >= 0 ? argvAll.slice(dd + 1) : []
     const f = {}, pos = []
-    const VALUED = new Set(['build', 'health', 'tag'])
+    const VALUED = new Set(['build', 'health', 'stop', 'startup-timeout', 'tag'])
     for (let i = 0; i < head.length; i++) {
       if (head[i].startsWith('--')) {
         const k = head[i].slice(2)
@@ -435,6 +435,8 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     } catch {
       die(`this server doesn't speak the push protocol — update it (ssh in and re-run the installer), or deploy on the server: weeny deploy ${app} --from <dir> -- <command>`)
     }
+    if (('stop' in f || 'startup-timeout' in f) && !begin.capabilities?.lifecycleCommands)
+      die('this server needs an updated Weeny CLI before --stop or --startup-timeout can be used; update the server CLI, then retry')
     if (!begin.defaults?.start?.length && !startArgv.length) {
       // The trap here: the app name defaults to the FOLDER name. If someone re-pushes an
       // existing app from a folder named differently, this looks like a first push of a
@@ -487,6 +489,8 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     const parts = ['weeny', '_deploy-finalize', app, '--id', begin.deploymentId]
     if ('build' in f) parts.push('--build', shq(f.build))
     if ('health' in f) parts.push('--health', shq(f.health))
+    if ('stop' in f) parts.push('--stop', shq(f.stop))
+    if ('startup-timeout' in f) parts.push('--startup-timeout', shq(f['startup-timeout']))
     if ('tag' in f) parts.push('--tag', shq(f.tag))
     if (git) parts.push('--git-b64', Buffer.from(JSON.stringify(git)).toString('base64'))
     if (startArgv.length) parts.push('--', ...startArgv.map(shq))
@@ -638,7 +642,7 @@ Existing paid accounts keep their purchased plan. For always-on hosting, the hum
 can choose a paid plan at ${API}/dashboard/account#servers.
 One server per account for now. Server controls: npx weeny-cloud help server
 Use server status, resume, suspend, rebuild or delete; disruptive actions need --confirm.`,
-  push: `npx weeny-cloud push [folder] [app-name] [--build "<cmd>"] [--health "<cmd>"] [--tag "<text>"] [--all] [-- <start command>]
+  push: `npx weeny-cloud push [folder] [app-name] [--build "<cmd>"] [--health "<cmd>"] [--stop "<cmd>"] [--startup-timeout <seconds>] [--tag "<text>"] [--all] [-- <start command>]
 
 Deploy a local folder to your server as a new release (name defaults to the folder's).
 First push needs the start command: end the line with \`-- <command>\`; a build step is
@@ -656,6 +660,10 @@ respects .gitignore (--all to override). Rollback: weeny rollback <app> on the s
 Open a shell on your server — or run one command and return. Uses the right key and IP
 so it always works. Your apps live in /apps, their data in /data.
 Sleeping free servers wake automatically for push or ssh; suspended servers do not.
+--startup-timeout <seconds> sets the total server readiness deadline (default 30).
+--stop "<cmd>" adds synchronous cleanup for external workloads; keep it idempotent.
+Both settings are remembered per release. Use --stop none or --startup-timeout none
+to reset them. Requires an updated server CLI; start commands stay in the foreground.
 No SSH key on this device (new laptop, wiped machine)? No problem — as long as you're
 signed in, ssh generates and registers a fresh device key automatically.
 

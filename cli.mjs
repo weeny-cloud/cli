@@ -654,16 +654,16 @@ the folder otherwise).
 Each push uploads into a fresh staging area (delta transfer against the live release),
 builds INSIDE the new release, health-checks it, and only then switches over — a failed
 build or a failing app leaves the previous release serving. Skips .git and node_modules;
-respects .gitignore (--all to override). Rollback: weeny rollback <app> on the server.`,
+respects .gitignore (--all to override). Rollback: weeny rollback <app> on the server.
+--startup-timeout <seconds> sets the total server readiness deadline (default 30).
+--stop "<cmd>" adds synchronous cleanup for external workloads; keep it idempotent.
+Both settings are remembered per release. Use --stop none or --startup-timeout none
+to reset them. Requires an updated server CLI; start commands stay in the foreground.`,
   ssh: `npx weeny-cloud ssh [command]
 
 Open a shell on your server — or run one command and return. Uses the right key and IP
 so it always works. Your apps live in /apps, their data in /data.
 Sleeping free servers wake automatically for push or ssh; suspended servers do not.
---startup-timeout <seconds> sets the total server readiness deadline (default 30).
---stop "<cmd>" adds synchronous cleanup for external workloads; keep it idempotent.
-Both settings are remembered per release. Use --stop none or --startup-timeout none
-to reset them. Requires an updated server CLI; start commands stay in the foreground.
 No SSH key on this device (new laptop, wiped machine)? No problem — as long as you're
 signed in, ssh generates and registers a fresh device key automatically.
 

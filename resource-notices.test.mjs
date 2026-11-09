@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, readdirSync, utimesSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { maybeShowResourceNotices, resourceNoticesAllowed } from './resource-notices.mjs'
@@ -41,4 +41,25 @@ test('old APIs and missing credentials cannot block ordinary commands', async ()
     await maybeShowResourceNotices(env, null, { fetchImpl: () => assert.fail() })
     await maybeShowResourceNotices(env, { token: 'x' }, { fetchImpl: async () => ({ ok: false }), notify: () => assert.fail() })
   } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('a slow notice fetch keeps its live lock even after the old stale-lock timeout', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'weeny-resource-lock-')), env = { api: 'https://staging.weeny.cloud', dir }
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  let finish, calls = 0
+  const pending = new Promise(resolve => { finish = resolve }), now = Date.now()
+  const first = maybeShowResourceNotices(env, { token: 'x' }, { now, fetchImpl: async () => {
+    calls++; await pending; return { ok: true, json: async () => ({ alerts: [] }) }
+  } })
+  try {
+    const lock = join(dir, readdirSync(dir).find(name => name.endsWith('.lock')))
+    for (const owner of readdirSync(lock)) utimesSync(join(lock, owner), new Date(0), new Date(0))
+    utimesSync(lock, new Date(0), new Date(0))
+    await maybeShowResourceNotices(env, { token: 'x' }, { now: now + 61_000, fetchImpl: async () => {
+      calls++; return { ok: true, json: async () => ({ alerts: [] }) }
+    } })
+    assert.equal(calls, 1)
+    assert.equal(readdirSync(lock).length, 1)
+  } finally { finish(); await first }
+  assert.equal(readdirSync(dir).some(name => name.endsWith('.lock') || name.endsWith('.tmp')), false)
 })

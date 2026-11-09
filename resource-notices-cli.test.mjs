@@ -39,3 +39,21 @@ throw Error('Unexpected '+url)};`)
     assert.equal(readFileSync(log, 'utf8').split('\n').filter(x => x.endsWith('/api/resource-alerts')).length, 1)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
+
+for (const kind of ['origin mismatch', 'unreadable credentials']) test(`optional resource notices preserve whoami help with ${kind}`, t => {
+  const dir = mkdtempSync(join(tmpdir(), 'weeny-resource-creds-')), preload = join(dir, 'credentials.mjs')
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const credentials = join(dir, 'credentials.json')
+  writeFileSync(credentials, JSON.stringify({ apiBase: 'https://staging.other.weeny.cloud', token: 'weeny_test' }))
+  writeFileSync(preload, `import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';
+const read=fs.readFileSync;
+fs.readFileSync=(path,...args)=>{if(path===${JSON.stringify(credentials)}&&${kind === 'unreadable credentials'})throw Object.assign(Error('denied'),{code:'EACCES'});return read(path,...args)};
+syncBuiltinESMExports();
+globalThis.fetch=async()=>{throw Error('optional notices must not fetch with unusable credentials')};`)
+  const env = { ...process.env, WEENY_ENV: 'staging', WEENY_API: 'https://staging.weeny.cloud', WEENY_CONFIG_DIR: dir }
+  for (const key of ['CI','WEENY_TOKEN','WEENY_SSH_KEY_FILE','WEENY_KNOWN_HOSTS_FILE']) delete env[key]
+  const result = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, cli, 'whoami'], { env, encoding: 'utf8', timeout: 5000 })
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /npx weeny-cloud login/)
+  assert.doesNotMatch(result.stderr, /Saved credentials|Cannot access Weeny|resource alert/)
+})

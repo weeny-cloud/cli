@@ -1,7 +1,8 @@
 // Optional account health notices. No message queue or acknowledgement protocol.
-import { readFileSync, writeFileSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
+import { readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
+import { trySkillLock, releaseSkillLock } from './skill-lock.mjs'
 const read = path => { try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return {} } }
 export function resourceNoticesAllowed(argv, env = process.env) {
   const cmd = argv[0] ?? ''
@@ -11,19 +12,16 @@ export function resourceNoticesAllowed(argv, env = process.env) {
 export async function maybeShowResourceNotices(environment, credentials, { now = Date.now(), fetchImpl = fetch, notify = console.error } = {}) {
   if (!credentials?.token) return
   const id = createHash('sha256').update(environment.api + '\0' + credentials.token).digest('hex').slice(0, 20)
-  const path = join(environment.dir, `resource-notices-${id}.json`), lock = path + '.lock'
+  const name = `resource-notices-${id}.json`, path = join(environment.dir, name)
   const save = state => {
     const tmp = path + '.' + randomUUID()
     try { writeFileSync(tmp, JSON.stringify(state), { mode: 0o600 }); renameSync(tmp, path) }
     finally { rmSync(tmp, { force: true }) }
   }
-  let locked = false
+  let lock
   try {
-    mkdirSync(environment.dir, { recursive: true, mode: 0o700 })
-    try { mkdirSync(lock); locked = true } catch {
-      try { if (now - statSync(lock).mtimeMs > 30_000) { rmSync(lock, { recursive: true, force: true }); mkdirSync(lock); locked = true } } catch {}
-      if (!locked) return
-    }
+    lock = trySkillLock(environment.dir, { now, name: name + '.lock' })
+    if (!lock) return
     const state = read(path)
     if (Number.isFinite(state.checkedAt) && now >= state.checkedAt && now - state.checkedAt < 60_000) return
     save({ ...state, checkedAt: now }) // Offline/old control also backs off.
@@ -47,5 +45,5 @@ export async function maybeShowResourceNotices(environment, credentials, { now =
     }
     save({ checkedAt: now, shown: nextShown })
   } catch {} // Never turn a healthy operation into a failure or contaminate stdout.
-  finally { if (locked) try { rmSync(lock, { recursive: true, force: true }) } catch {} }
+  finally { releaseSkillLock(lock) }
 }

@@ -17,3 +17,17 @@ jobs:
       - run: npm test
       - run: node --check cli.mjs
       - run: npm pack --dry-run
+
+  version-candidate:
+    if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
+    name: CLI version candidate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Compare package version with current main
+        run: |
+          git fetch origin main
+          python3 .github/scripts/pr_guardrails.py --version-only --base origin/main

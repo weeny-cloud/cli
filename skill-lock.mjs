@@ -46,7 +46,13 @@ export function trySkillLock(dir, { now = Date.now(), name = 'skill-update.lock'
         if (processAlive(pid)) return null // Never evict a live owner based on age.
       } else if (now - modifiedAt < 60000) return null
       try { unlinkSync(previous) }
-      catch (error) { if (error.code === 'ENOENT') continue; throw error }
+      catch (error) {
+        if (error.code === 'ENOENT') continue
+        // Windows can report a concurrent deletion as EPERM while the old file
+        // is delete-pending. Yield without claiming ownership or touching a replacement.
+        if (process.platform === 'win32' && error.code === 'EPERM') return null
+        throw error
+      }
       try { rmdirSync(path) }
       catch (error) {
         // Another contender may already have published its populated replacement.

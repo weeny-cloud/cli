@@ -70,6 +70,55 @@ assert.equal(disappeared,true);
   assert.ok(JSON.parse(readFileSync(join(dir, 'skill-update.json'))).installedHash)
 })
 
+test('Windows delete-pending cleanup yields without touching a replacement owner', t => {
+  const dir = fixture(t), path = abandoned(dir), worker = join(dir, 'delete-pending.mjs')
+  writeFileSync(worker, `import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import {syncBuiltinESMExports} from 'node:module';
+const {trySkillLock,releaseSkillLock}=await import(${JSON.stringify(locks)});
+Object.defineProperty(process,'platform',{value:'win32'});
+const original=fs.unlinkSync;let replacement;
+fs.unlinkSync=(file,...args)=>{
+  if(file===${JSON.stringify(join(path, staleOwner))}) {
+    original(file,...args);fs.rmdirSync(${JSON.stringify(path)});
+    replacement=trySkillLock(${JSON.stringify(dir)});
+    assert.ok(replacement);
+    throw Object.assign(new Error('stale file is being deleted by another contender'),{code:'EPERM'});
+  }
+  return original(file,...args);
+};
+syncBuiltinESMExports();
+assert.equal(trySkillLock(${JSON.stringify(dir)}),null);
+assert.deepEqual(fs.readdirSync(${JSON.stringify(path)}),[replacement.owner]);
+assert.equal(trySkillLock(${JSON.stringify(dir)}),null);
+releaseSkillLock(replacement);
+assert.deepEqual(fs.readdirSync(${JSON.stringify(dir)}),['delete-pending.mjs']);
+`)
+  execFileSync(process.execPath, [worker], { encoding: 'utf8', timeout: 5000 })
+})
+
+test('stale cleanup still reports unrelated permission and filesystem errors', t => {
+  const dir = fixture(t), path = abandoned(dir), worker = join(dir, 'permission-errors.mjs')
+  writeFileSync(worker, `import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import {syncBuiltinESMExports} from 'node:module';
+const {trySkillLock}=await import(${JSON.stringify(locks)});
+const original=fs.unlinkSync;
+for(const [platform,code] of [['win32','EACCES'],['win32','EROFS'],['linux','EPERM']]) {
+  Object.defineProperty(process,'platform',{value:platform});
+  fs.unlinkSync=(file,...args)=>{
+    if(file===${JSON.stringify(join(path, staleOwner))}) throw Object.assign(new Error('fixture permission denied'),{code});
+    return original(file,...args);
+  };
+  syncBuiltinESMExports();
+  assert.throws(()=>trySkillLock(${JSON.stringify(dir)}),error=>error.code===code);
+  assert.deepEqual(fs.readdirSync(${JSON.stringify(path)}),[${JSON.stringify(staleOwner)}]);
+}
+assert.deepEqual(fs.readdirSync(${JSON.stringify(dir)}).sort(),['permission-errors.mjs','skill-update.lock']);
+`)
+  execFileSync(process.execPath, [worker], { encoding: 'utf8', timeout: 5000 })
+})
+
 for (const name of ['skill-update.lock', 'resource-notices-fixture.json.lock']) test(`two processes recovering the same abandoned ${name} leave exactly one owner`, { timeout: 15000 }, async t => {
   const dir = fixture(t), path = abandoned(dir, name), barrier = join(dir, 'recover'), worker = join(dir, 'contender.mjs')
   writeFileSync(worker, `import fs from 'node:fs';

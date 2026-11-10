@@ -1,3 +1,14 @@
+# PR guardrails
+
+- Bump `package.json` to a valid SemVer higher than current main on every PR,
+  including documentation and CI changes. Keep committed lockfile root versions
+  aligned when present. A version bump does not authorize npm publication.
+- Maintain `.github/prompt-files.json` for new agent-facing prompt, skill,
+  instruction or reference locations. Review the automatic **Prompt size** report
+  and **CLI version bump** check. The version check refreshes when main advances;
+  another PR can invalidate a previously passing version without changing yours.
+- See `docs/pr-guardrails.md` for measurement details and required-check activation.
+
 # Release workflow
 
 Push every change as a GitHub PR and test the unpublished candidate against isolated

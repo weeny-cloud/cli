@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "patterns": [
+    {
+      "glob": "AGENTS.md",
+      "reason": "Repository agent policy"
+    },
+    {
+      "glob": "**/AGENTS.md",
+      "reason": "Nested agent policies"
+    },
+    {
+      "glob": "CLAUDE.md",
+      "reason": "Claude entry instructions"
+    },
+    {
+      "glob": "**/CLAUDE.md",
+      "reason": "Nested Claude instructions"
+    },
+    {
+      "glob": "**/SKILL.md",
+      "reason": "Agent skills"
+    },
+    {
+      "glob": ".github/copilot-instructions.md",
+      "reason": "Copilot instructions"
+    },
+    {
+      "glob": ".github/instructions/**",
+      "reason": "Scoped agent instructions"
+    },
+    {
+      "glob": ".cursorrules",
+      "reason": "Cursor instructions"
+    },
+    {
+      "glob": ".cursor/rules/**",
+      "reason": "Cursor rule files"
+    },
+    {
+      "glob": "recipes/*.txt",
+      "reason": "Packaged agent recipe mirrors"
+    },
+    {
+      "glob": "prompts/**",
+      "reason": "Dedicated prompt files"
+    },
+    {
+      "glob": "**/prompts/**",
+      "reason": "Nested dedicated prompt files"
+    }
+  ]
+}

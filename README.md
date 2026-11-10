@@ -141,6 +141,11 @@ production environment with required reviewers where your plan supports it.
 Staging and production apps/credentials should have separate environments. Test
 PRs without secrets; do not deploy untrusted forks using `pull_request_target`.
 
+Resource warnings appear on stderr during ordinary authenticated commands, with
+measured evidence and a suitable plan preview. JSON, CI and raw SSH stay quiet;
+`server status --json` includes health and structured alerts. Optional checks time
+out after one second and never fail the requested command.
+
 ### Account controls for agents
 
 - `weeny-cloud server status --json`: read state without waking; `resume` wakes a

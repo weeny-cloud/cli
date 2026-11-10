@@ -14,8 +14,8 @@ function fixture(t) {
   t.after(() => rmSync(dir, { recursive: true, force: true }))
   return dir
 }
-function abandoned(dir) {
-  const path = join(dir, 'skill-update.lock')
+function abandoned(dir, name = 'skill-update.lock') {
+  const path = join(dir, name)
   mkdirSync(path)
   writeFileSync(join(path, staleOwner), '{"pid":0}')
   utimesSync(join(path, staleOwner), new Date(0), new Date(0))
@@ -70,8 +70,8 @@ assert.equal(disappeared,true);
   assert.ok(JSON.parse(readFileSync(join(dir, 'skill-update.json'))).installedHash)
 })
 
-test('two processes recovering the same abandoned lock leave exactly one owner', { timeout: 15000 }, async t => {
-  const dir = fixture(t), path = abandoned(dir), barrier = join(dir, 'recover'), worker = join(dir, 'contender.mjs')
+for (const name of ['skill-update.lock', 'resource-notices-fixture.json.lock']) test(`two processes recovering the same abandoned ${name} leave exactly one owner`, { timeout: 15000 }, async t => {
+  const dir = fixture(t), path = abandoned(dir, name), barrier = join(dir, 'recover'), worker = join(dir, 'contender.mjs')
   writeFileSync(worker, `import fs from 'node:fs';
 import {syncBuiltinESMExports} from 'node:module';
 const original = fs.unlinkSync;
@@ -88,7 +88,7 @@ fs.unlinkSync = (path, ...args) => {
 };
 syncBuiltinESMExports();
 const {trySkillLock,releaseSkillLock}=await import(${JSON.stringify(locks)});
-const lock=trySkillLock(${JSON.stringify(dir)});
+const lock=trySkillLock(${JSON.stringify(dir)},{name:${JSON.stringify(name)}});
 if(lock) {
   process.on('message',()=>{releaseSkillLock(lock);process.disconnect()});
   process.send({type:'result',owner:lock.owner});
@@ -114,9 +114,26 @@ if(lock) {
   const owners = await Promise.all([a.outcome, b.outcome])
   assert.equal(owners.filter(Boolean).length, 1)
   assert.deepEqual(readdirSync(path), [owners.find(Boolean)])
-  assert.equal(trySkillLock(dir), null)
+  assert.equal(trySkillLock(dir, { name }), null)
   const winner = owners[0] ? a : b
   winner.child.send('release')
   for (const exit of await Promise.all([a.exited, b.exited])) assert.equal(exit.code, 0, exit.stderr)
   assert.equal(existsSync(path), false)
+})
+
+test('named notice locks stay independent and a former owner cannot release a replacement', t => {
+  const dir = fixture(t), name = 'resource-notices-fixture.json.lock'
+  const skill = trySkillLock(dir), old = trySkillLock(dir, { name })
+  assert.ok(old)
+  assert.notEqual(skill.path, old.path)
+  writeFileSync(join(old.path, old.owner), '{"pid":0}')
+  utimesSync(join(old.path, old.owner), new Date(0), new Date(0))
+  const replacement = trySkillLock(dir, { name })
+  assert.ok(replacement)
+  releaseSkillLock(old)
+  assert.deepEqual(readdirSync(replacement.path), [replacement.owner])
+  assert.equal(trySkillLock(dir, { name }), null)
+  assert.equal(trySkillLock(dir), null)
+  releaseSkillLock(replacement)
+  releaseSkillLock(skill)
 })

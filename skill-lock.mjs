@@ -11,9 +11,9 @@ function processAlive(pid) {
 
 // Publish an already populated directory atomically. A replacement lock is never
 // empty, so cleanup of an older owner cannot remove it with rmdir.
-export function trySkillLock(dir, { now = Date.now() } = {}) {
+export function trySkillLock(dir, { now = Date.now(), name = 'skill-update.lock' } = {}) {
   mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const path = join(dir, 'skill-update.lock'), token = randomUUID()
+  const path = join(dir, name), token = randomUUID()
   const candidate = `${path}.${token}.tmp`, owner = `owner-${token}.json`
   let published = false
   try {

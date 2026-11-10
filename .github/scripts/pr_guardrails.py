@@ -260,6 +260,9 @@ def refresh(api, number, encoding, cli, trusted_manifest, force=False):
                          and c.get('body', '').startswith(MARKER)), None)
         if not force and existing and signature in existing['body']:
             return None
+        if existing and signature in existing['body']:
+            api.request('PATCH', f'issues/comments/{existing["id"]}',
+                        {'body': existing['body'].replace(signature, '')})
         checks = [(PROMPT_CHECK, check(api, sha, PROMPT_CHECK))]
         if cli:
             checks.append((VERSION_CHECK, check(api, sha, VERSION_CHECK)))

@@ -27,6 +27,24 @@ npx weeny-cloud ssh "weeny expose demo 3000"   # → https://demo-xxxx.onweeny.c
 Everything else is bare Linux — you have root. Apps are systemd units named
 `weeny-<app>`, so logs are `journalctl -u weeny-<app> -f`.
 
+Slow applications can set a total startup deadline, and externally managed
+workloads can provide an explicit stop command:
+
+```sh
+npx weeny-cloud push ./myapp myapp --startup-timeout 120 \
+  --health 'curl -fsS http://127.0.0.1:3000/health' \
+  --stop './stop.sh' -- ./run.sh
+```
+
+These flags require an updated VM CLI. Health and stop commands run in the
+deployed release with the app environment. Health checks retry until the startup
+deadline and must be safe to repeat. Stop commands must wait for cleanup and be
+idempotent; they run before the foreground process group is terminated. Ordinary
+apps need no stop override. Start commands must remain in the foreground.
+Settings are versioned with releases and reused on subsequent pushes; use
+`--stop none` or `--startup-timeout none` to reset them. Publishing this laptop
+package and upgrading an existing server are separate release operations.
+
 ## What you get
 
 - A real, persistent Linux server: root, SSH, systemd. No Docker, no framework,

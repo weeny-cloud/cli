@@ -70,6 +70,55 @@ assert.equal(disappeared,true);
   assert.ok(JSON.parse(readFileSync(join(dir, 'skill-update.json'))).installedHash)
 })
 
+test('Windows delete-pending cleanup yields without touching a replacement owner', t => {
+  const dir = fixture(t), path = abandoned(dir), worker = join(dir, 'delete-pending.mjs')
+  writeFileSync(worker, `import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import {syncBuiltinESMExports} from 'node:module';
+const {trySkillLock,releaseSkillLock}=await import(${JSON.stringify(locks)});
+Object.defineProperty(process,'platform',{value:'win32'});
+const original=fs.unlinkSync;let replacement;
+fs.unlinkSync=(file,...args)=>{
+  if(file===${JSON.stringify(join(path, staleOwner))}) {
+    original(file,...args);fs.rmdirSync(${JSON.stringify(path)});
+    replacement=trySkillLock(${JSON.stringify(dir)});
+    assert.ok(replacement);
+    throw Object.assign(new Error('stale file is being deleted by another contender'),{code:'EPERM'});
+  }
+  return original(file,...args);
+};
+syncBuiltinESMExports();
+assert.equal(trySkillLock(${JSON.stringify(dir)}),null);
+assert.deepEqual(fs.readdirSync(${JSON.stringify(path)}),[replacement.owner]);
+assert.equal(trySkillLock(${JSON.stringify(dir)}),null);
+releaseSkillLock(replacement);
+assert.deepEqual(fs.readdirSync(${JSON.stringify(dir)}),['delete-pending.mjs']);
+`)
+  execFileSync(process.execPath, [worker], { encoding: 'utf8', timeout: 5000 })
+})
+
+test('stale cleanup still reports unrelated permission and filesystem errors', t => {
+  const dir = fixture(t), path = abandoned(dir), worker = join(dir, 'permission-errors.mjs')
+  writeFileSync(worker, `import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import {syncBuiltinESMExports} from 'node:module';
+const {trySkillLock}=await import(${JSON.stringify(locks)});
+const original=fs.unlinkSync;
+for(const [platform,code] of [['win32','EACCES'],['win32','EROFS'],['linux','EPERM']]) {
+  Object.defineProperty(process,'platform',{value:platform});
+  fs.unlinkSync=(file,...args)=>{
+    if(file===${JSON.stringify(join(path, staleOwner))}) throw Object.assign(new Error('fixture permission denied'),{code});
+    return original(file,...args);
+  };
+  syncBuiltinESMExports();
+  assert.throws(()=>trySkillLock(${JSON.stringify(dir)}),error=>error.code===code);
+  assert.deepEqual(fs.readdirSync(${JSON.stringify(path)}),[${JSON.stringify(staleOwner)}]);
+}
+assert.deepEqual(fs.readdirSync(${JSON.stringify(dir)}).sort(),['permission-errors.mjs','skill-update.lock']);
+`)
+  execFileSync(process.execPath, [worker], { encoding: 'utf8', timeout: 5000 })
+})
+
 for (const name of ['skill-update.lock', 'resource-notices-fixture.json.lock']) test(`two processes recovering the same abandoned ${name} leave exactly one owner`, { timeout: 15000 }, async t => {
   const dir = fixture(t), path = abandoned(dir, name), barrier = join(dir, 'recover'), worker = join(dir, 'contender.mjs')
   writeFileSync(worker, `import fs from 'node:fs';
@@ -77,7 +126,9 @@ import {syncBuiltinESMExports} from 'node:module';
 const original = fs.unlinkSync;
 fs.unlinkSync = (path, ...args) => {
   if(path === ${JSON.stringify(join(path, staleOwner))}) {
-    process.send({type:'observed'});
+    // The lock API is synchronous. Publish readiness synchronously too: IPC may
+    // need the event loop to flush, which the barrier below deliberately blocks.
+    fs.writeFileSync(process.argv[2],'observed');
     const deadline=Date.now()+5000;
     while(!fs.existsSync(${JSON.stringify(barrier)})) {
       if(Date.now()>deadline) throw Error('recovery barrier timed out');
@@ -94,21 +145,36 @@ if(lock) {
   process.send({type:'result',owner:lock.owner});
 } else process.send({type:'result',owner:null},()=>process.disconnect());
 `)
-  function launch() {
-    const child = spawn(process.execPath, [worker], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] })
+  function launch(label) {
+    const observedPath = join(dir, `${label}.observed`)
+    const child = spawn(process.execPath, [worker, observedPath], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] })
     t.after(() => child.kill())
-    let observed, result, stderr = ''
-    const sawOldOwner = new Promise(resolve => { observed = resolve })
-    const outcome = new Promise(resolve => { result = resolve })
+    let result, rejectResult, failure, gotResult = false, stderr = ''
+    const outcome = new Promise((resolve, reject) => { result = resolve; rejectResult = reject })
+    // A worker can fail before the parent finishes waiting for both observations.
+    outcome.catch(() => {})
     child.stderr.on('data', data => { stderr += data })
+    child.on('error', error => { failure = error; rejectResult(error) })
     child.on('message', message => {
-      if (message.type === 'observed') observed()
-      if (message.type === 'result') result(message.owner)
+      if (message.type === 'result') { gotResult = true; result(message.owner) }
     })
-    const exited = new Promise(resolve => child.on('exit', code => resolve({ code, stderr })))
+    const exited = new Promise(resolve => child.on('close', (code, signal) => {
+      if (code !== 0 || !gotResult) {
+        failure = new Error(`contender ${label} exited before completing (code ${code}, signal ${signal}): ${stderr}`)
+        rejectResult(failure)
+      }
+      resolve({ code, stderr })
+    }))
+    const sawOldOwner = (async () => {
+      while (!existsSync(observedPath)) {
+        if (failure) throw failure
+        if (t.signal.aborted) throw t.signal.reason
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+    })()
     return { child, sawOldOwner, outcome, exited }
   }
-  const a = launch(), b = launch()
+  const a = launch('a'), b = launch('b')
   await Promise.all([a.sawOldOwner, b.sawOldOwner])
   writeFileSync(barrier, 'go') // Both contenders have already inspected the same owner.
   const owners = await Promise.all([a.outcome, b.outcome])

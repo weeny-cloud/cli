@@ -177,6 +177,12 @@ out after one second and never fail the requested command.
 - `weeny-cloud billing portal`: human payment/invoice/cancellation link.
   `billing checkout TIER --confirm` prepares a link without paying; `--direct-paid`
   buys a first server without a trial, after the human chooses that path.
+- `weeny-cloud billing cancel-checkout`: cancel the account's open unpaid checkout
+  without opening the dashboard. Keeps the waitlist place and existing server;
+  free server requests still depend on capacity. Use `--id PURCHASE_ID` to retry a
+  particular checkout, or `--json` for structured output. Completed purchases and
+  paid subscriptions use the existing billing flow. After cancellation, retry
+  `weeny-cloud create` when free capacity is available.
 - `weeny-cloud logout`: revoke this token and remove local credentials. `--local`
   removes only the local copy when offline.
 

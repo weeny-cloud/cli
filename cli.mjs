@@ -69,7 +69,11 @@ async function call(path, { method = 'GET', body, auth = true } = {}) {
     if (json.data?.code === 'builder_profile_required' && !process.argv.includes('--json')) onboardingNotice(json.data.onboarding)
     if (method === 'POST' && path === '/api/machines' && (json.data?.offers || json.data?.code === 'waitlisted'))
       serverChoices({ ...json.data, status: 'waitlisted' }, json.data?.position)
-    die(json.statusMessage || json.message || `${method} ${path} → ${res.status}`, { status: res.status, data: json.data })
+    const cancelCheckoutCommand=method==='POST' && path==='/api/machines' && json.data?.code==='exists' && json.data?.checkoutUrl
+      ? 'npx weeny-cloud billing cancel-checkout' : undefined
+    if (cancelCheckoutCommand && !process.argv.includes('--json')) console.error(`Cancel the unpaid checkout and keep your waitlist place: ${cancelCheckoutCommand}`)
+    die(json.statusMessage || json.message || `${method} ${path} → ${res.status}`, { status: res.status, data: json.data,
+      ...(cancelCheckoutCommand ? {nextCommand:cancelCheckoutCommand} : {}) })
   }
   return json
 }
@@ -237,6 +241,10 @@ function freeNotice(machine = {}) {
 // claim capacity, and the financial choice always stays with the human.
 function serverChoices(raw, position) {
   const access = accessObject(raw)
+  if (['held','checkout'].includes(access.purchase?.status)) {
+    console.error('An unpaid server checkout is open. To cancel it and keep your waitlist place: npx weeny-cloud billing cancel-checkout')
+    return
+  }
   if (access.hasServer || ['ready', 'provisioning'].includes(access.status)) return
   if (access.offers?.trial?.available)
     console.error('Start free with 7 days at 4 GB — npx weeny-cloud create (recommended). Then the same server automatically continues at 1 GB free forever, which sleeps when idle. No card, no automatic charge; your apps and data stay. Seven days start when your server is ready.')
@@ -298,7 +306,7 @@ function commandList() {
   npx weeny-cloud server           status / resume / suspend / rebuild / delete
   npx weeny-cloud widget <app>     badge and starting position (also on the server)
   npx weeny-cloud tier             plans / preview / confirmed plan change
-  npx weeny-cloud billing          status / human checkout or billing portal link
+  npx weeny-cloud billing          status / cancel-checkout / human billing links
   npx weeny-cloud logout           revoke this token and remove local credentials
   npx weeny-cloud feedback         preview feedback for Theo (send only with --confirm)
   npx weeny-cloud skill            teach your coding agent all of this
@@ -349,11 +357,11 @@ const commands = {
     let pub = findPublicKey()
     if (!pub) {
       profileDirectory(SSH_DIR)
-      console.log(`no SSH key found — generating ${join(SSH_DIR, 'weeny_ed25519')}`)
+      if (!process.argv.includes('--json')) console.log(`no SSH key found — generating ${join(SSH_DIR, 'weeny_ed25519')}`)
       execFileSync('ssh-keygen', ['-t', 'ed25519', '-N', '', '-C', 'weeny', '-f', join(SSH_DIR, 'weeny_ed25519')])
       pub = findPublicKey()
     }
-    console.log(`using SSH key: ${pub.path}`)
+    if (!process.argv.includes('--json')) console.log(`using SSH key: ${pub.path}`)
     const m = await call('/api/machines', { method: 'POST', body: { sshPublicKey: pub.key } })
     if (m.unsynced?.length) die(`Device key saved, but its server could not be reached: ${m.unsynced.join(', ')}. Retry create before connecting.`)
     if (m.waitingForCapacity) {
@@ -742,11 +750,17 @@ Free apps require the built with weeny badge; paid/trial apps can remove it.`,
 Read plans; preview a change without billing; apply a human-approved change with
 --confirm (or interactive confirmation). --force explicitly overrides a downgrade
 memory warning. The human chooses spending. Checkout still requires payment.`,
-  billing: `weeny-cloud billing [status|portal|checkout TIER --confirm [--direct-paid]] [--json]
+  billing: `weeny-cloud billing [status|portal|cancel-checkout [--id PURCHASE_ID]|checkout TIER --confirm [--direct-paid]] [--json]
 
 Return plans, a portal link for invoices/payment/cancellation, or a checkout link
 for the human's chosen tier. --direct-paid buys a first paid server without a trial.
-Preparing a link does not pay. Existing subscribers change size through tier.`,
+Preparing a link does not pay. Existing subscribers change size through tier.
+
+cancel-checkout cancels the open unpaid checkout and preserves your waitlist place
+and existing server. No browser or extra confirmation flag is needed. --id selects
+a particular purchase for retries; completed purchases are protected by the API.
+No open checkout returns cancelled:false in JSON. This does not cancel a paid
+subscription. Free requests still need capacity; retry npx weeny-cloud create.`,
   logout: `weeny-cloud logout [--local] [--json]
 
 Revoke this account token, then remove its local credentials. Other sessions and

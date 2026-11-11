@@ -367,8 +367,8 @@ test('a failed free claim does not repeat its human paid link', () => {
     const r = f.run('create', '--free')
     assert.equal(r.status, 1)
     assert.match(r.stderr, /Paid server available.*Only the human should choose/)
-    assert.equal((r.stderr.match(/\/dashboard\/account#servers/g) ?? []).length, 1)
-    assert.doesNotMatch(r.stdout, /\/dashboard\/account#servers/)
+    assert.equal((r.stderr.match(/\/dashboard\/start/g) ?? []).length, 1)
+    assert.doesNotMatch(r.stdout, /\/dashboard\/start/)
   } finally { f.close() }
 })
 
@@ -462,3 +462,18 @@ test('bare CLI focuses an incomplete signup on project context before any server
     assert.doesNotMatch(r.stdout, /no server yet|available trial|free server|waitlist/)
   } finally { f.close() }
 })
+
+for (const serverUrl of [undefined, api + '/dashboard/start?tier=teeny']) {
+  test(`completed signup hands the human to current server choices (${serverUrl ? 'API link' : 'fallback'})`, () => {
+    const f = fixture(`globalThis.fetch=async(url,opts)=>{
+      assert.equal(url,${JSON.stringify(api + '/api/auth/verify')});
+      return Response.json({status:'ok',email:'person@example.test',token:'new-token',onboarding:{required:true,complete:true},serverAccess:{status:'unrequested',serverUrl:${JSON.stringify(serverUrl) ?? 'undefined'},offers:{trial:{available:false},free:{available:false}},plans:[{tier:'teeny',available:true}]}});
+    };`)
+    try {
+      const r = f.run('login','--email','person@example.test','--code','123456')
+      assert.equal(r.status,0,r.stderr)
+      assert.ok(r.stderr.includes(serverUrl || api + '/dashboard/start'))
+      assert.doesNotMatch(r.stderr,/dashboard\/account#servers|Finish signup/)
+    } finally { f.close() }
+  })
+}

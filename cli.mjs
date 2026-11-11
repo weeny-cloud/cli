@@ -224,7 +224,7 @@ let paidChoiceShown = false
 function paidChoice(access = {}, upgrade = false) {
   if (paidChoiceShown || access.paid) return
   paidChoiceShown = true
-  const url = `${API}/dashboard/account#${upgrade ? 'billing' : 'servers'}`
+  const url = upgrade ? `${API}/dashboard/account#billing` : access.serverUrl || `${API}/dashboard/start`
   if (upgrade) return console.error(`Paid upgrade for always-on hosting or more RAM. Ask your human to choose: ${url}`)
   const available = access.plans?.some(plan => plan.available)
   console.error(`${available ? 'Paid server available' : 'Paid plans (check availability)'}. Only the human should choose a paid plan (direct paid access charges immediately without a free trial): ${url}`)
@@ -654,7 +654,7 @@ No card needed, no automatic charge; your apps and data stay.
 HTTPS, private sharing, rollback and off-machine backups are included.
 The free plan sleeps after 30 idle minutes and wakes on request.
 Existing paid accounts keep their purchased plan. For always-on hosting, the human
-can choose a paid plan at ${API}/dashboard/account#servers.
+can choose a paid plan at ${API}/dashboard/start.
 One server per account for now. Server controls: npx weeny-cloud help server
 Use server status, resume, suspend, rebuild or delete; disruptive actions need --confirm.`,
   push: `npx weeny-cloud push [folder] [app-name] [--build "<cmd>"] [--health "<cmd>"] [--stop "<cmd>"] [--startup-timeout <seconds>] [--tag "<text>"] [--all] [-- <start command>]

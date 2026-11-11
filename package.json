@@ -1,6 +1,6 @@
 {
   "name": "weeny-cloud",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "description": "weeny.cloud \u2014 a real Linux server for coding agents. Free forever, with HTTPS, private sharing and backups.",
   "homepage": "https://weeny.cloud",
   "repository": {
@@ -26,6 +26,7 @@
     "cli.mjs",
     "account-commands.mjs",
     "feedback.mjs",
+    "onboarding.mjs",
     "environment.mjs",
     "profile.mjs",
     "ssh-command.mjs",

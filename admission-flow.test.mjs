@@ -413,3 +413,52 @@ test('create help describes automatic selection without offering a free flag', (
     assert.doesNotMatch(r.stdout, /--free|skip the trial/)
   } finally { f.close() }
 })
+
+test('login prompts agents to finish only incomplete required profiles, without repeating the questionnaire', () => {
+  for (const complete of [false, true]) {
+    const f = fixture(`globalThis.fetch=async()=>Response.json({status:'ok',email:'person@example.test',token:'new-token',serverAccess:{status:'unrequested',offers:{trial:{available:false},free:{available:false}}},onboarding:{required:true,complete:${complete},agentInstructions:'Complete this yourself from known project context; use unknown discovery without interrupting the user.',completionUrl:'http://127.0.0.1:3123/onboarding'}});`)
+    try {
+      const r = f.run('login', '--email', 'person@example.test', '--code', '123456')
+      assert.equal(r.status, 0, r.stderr)
+      if (complete) assert.doesNotMatch(r.stderr, /Finish signup for your user|Complete this yourself/)
+      else {
+        assert.match(r.stderr, /onboarding --project/)
+        assert.match(r.stderr, /known project context/)
+        assert.match(r.stderr, /without interrupting the user/)
+        assert.match(r.stderr, /127.0.0.1:3123\/onboarding/)
+        assert.doesNotMatch(r.stderr, /waiting for a server|unavailable|Paid plans|charges immediately|7 days|4 GB|1 GB/)
+      }
+    } finally { f.close() }
+  }
+})
+test('a gated create gives the agent a concrete next command without polling or losing its account', () => {
+  const f = fixture(`globalThis.fetch=async(url,opts)=>{
+    assert.equal(opts.method,'POST');assert.equal(url,${JSON.stringify(api + '/api/machines')});
+    return Response.json({statusMessage:'Complete the builder profile before requesting a server',data:{code:'builder_profile_required',onboarding:{required:true,complete:false,completionUrl:'http://127.0.0.1:3123/onboarding'}}},{status:409});
+  };`)
+  try {
+    const r = f.run('create')
+    assert.equal(r.status, 1)
+    assert.match(r.stderr, /onboarding --project/)
+    assert.match(r.stderr, /discovery can be unknown/)
+    assert.match(r.stderr, /Human fallback/)
+    assert.doesNotMatch(r.stdout, /setting up your server|your server is ready/)
+    assert.equal(JSON.parse(readFileSync(join(f.profile,'credentials.json'),'utf8')).token,'test-token')
+  } finally { f.close() }
+})
+
+test('bare CLI focuses an incomplete signup on project context before any server choices', () => {
+  const f = fixture(`globalThis.fetch=async(url)=>{
+    if(url.endsWith('/api/machines')) return Response.json({machines:[]});
+    assert.equal(url,${JSON.stringify(api + '/api/me')});
+    return Response.json({onboarding:{required:true,complete:false,agentInstructions:'Save the known project context.',completionUrl:'http://127.0.0.1:3123/onboarding'},serverAccess:{status:'unrequested',offers:{trial:{available:false},free:{available:false}}}});
+  };`)
+  try {
+    const r = f.run()
+    assert.equal(r.status, 0, r.stderr)
+    assert.match(r.stderr, /onboarding --project/)
+    assert.match(r.stderr, /Save the known project context/)
+    assert.doesNotMatch(r.stderr, /unavailable|waiting for a server|Paid plans|charges immediately/)
+    assert.doesNotMatch(r.stdout, /no server yet|available trial|free server|waitlist/)
+  } finally { f.close() }
+})

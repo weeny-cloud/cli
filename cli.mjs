@@ -8,6 +8,7 @@ import { createInterface } from 'node:readline/promises'
 import { join, resolve, basename, relative, isAbsolute, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { feedbackHelp, runFeedback } from './feedback.mjs'
+import { onboardingHelp, onboardingNotice, runOnboarding } from './onboarding.mjs'
 import { cliEnvironment, credentialsForOrigin, credentialsFromEnv } from './environment.mjs'
 import { installSkill, maybeCheckUpdates } from './skill-updates.mjs'
 import { resourceNoticesAllowed, maybeShowResourceNotices } from './resource-notices.mjs'
@@ -65,6 +66,7 @@ async function call(path, { method = 'GET', body, auth = true } = {}) {
     process.exit(1)
   }
   if (!res.ok) {
+    if (json.data?.code === 'builder_profile_required' && !process.argv.includes('--json')) onboardingNotice(json.data.onboarding)
     if (method === 'POST' && path === '/api/machines' && (json.data?.offers || json.data?.code === 'waitlisted'))
       serverChoices({ ...json.data, status: 'waitlisted' }, json.data?.position)
     die(json.statusMessage || json.message || `${method} ${path} → ${res.status}`, { status: res.status, data: json.data })
@@ -262,8 +264,9 @@ async function orient() {
   console.log(`signed in as ${creds.email}`)
   const current = machines.filter(m => !['failed', 'deleted'].includes(m.status))
   if (!current.length) {
-    console.log('no server yet')
     const me = await call('/api/me')
+    if (me.onboarding?.required && !me.onboarding.complete) return onboardingNotice(me.onboarding)
+    console.log('no server yet')
     serverChoices(me.serverAccess, me.serverAccess?.position)
     return commandList()
   }
@@ -285,6 +288,7 @@ async function orient() {
 function commandList() {
   console.log(`
   npx weeny-cloud login            sign in — weeny emails you a code
+  npx weeny-cloud onboarding      complete signup from the project context your agent already has
   npx weeny-cloud create          available trial, otherwise free, otherwise waitlist
   npx weeny-cloud push [folder]    deploy this folder to your server (re-push = new release)
   npx weeny-cloud ssh [command]    go to the server — that's where the power is
@@ -304,6 +308,10 @@ on the server, apps are run with \`weeny\` — bare \`weeny\` there explains its
 }
 
 const commands = {
+  async onboarding() {
+    try { await runOnboarding(process.argv.slice(3), { call }) }
+    catch (e) { die(e.message) }
+  },
   async feedback() {
     try {
       await runFeedback(process.argv.slice(3), { command: 'npx weeny-cloud feedback',
@@ -331,6 +339,7 @@ const commands = {
     }
     writeProfile(CREDS, JSON.stringify({ email: v.email, token: v.token, apiBase: API }, null, 2))
     console.log(`✓ signed in as ${v.email}`)
+    if (v.onboarding?.required && !v.onboarding.complete) return onboardingNotice(v.onboarding)
     serverChoices(v.serverAccess, v.position ?? v.serverAccess?.position)
   },
 
@@ -614,6 +623,7 @@ Your Claude Code now knows how to deploy to weeny. Try: "deploy this app to ween
 }
 
 const HELP = {
+  onboarding: onboardingHelp,
   feedback: feedbackHelp('npx weeny-cloud feedback'),
   login: `npx weeny-cloud login [--email x@y.com] [--code 123456]
 
@@ -630,6 +640,10 @@ This does not move an existing account; sign in again in the new profile.
 Sign out and revoke this token: npx weeny-cloud logout
 Offline only: logout --local removes the local copy without revoking it.`,
   create: `npx weeny-cloud create
+
+New builder signup needs a brief profile first. Agents can complete it from existing
+project context: npx weeny-cloud onboarding --project "Project purpose and hosting need".
+Unknown discovery is valid. See: npx weeny-cloud help onboarding
 
 Provision your server (~2 min): a real Linux box — root, SSH, systemd. Uses your SSH
 key (generates ~/.ssh/weeny_ed25519 if you have none). Automatically starts an
@@ -742,18 +756,20 @@ SSH keys stay active. --local works offline but leaves the token valid on the se
 const account = accountCommands({ call, loadCreds, ask, interactive: !!process.stdin.isTTY, fromEnv: !!CI_CREDS,
   clearCredentials: () => rmSync(CREDS, { force: true }) })
 const cmd = process.argv[2]
+const onboardingHelpRequested = cmd === 'onboarding' && process.argv.slice(3).some(arg => arg === '--help' || arg === '-h')
 try {
 // Never put notices or optional work in CI, the explicit installer, or SSH's byte relay.
-if (!process.argv.includes('--json') && !process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) await maybeCheckUpdates(ENV, SELF)
+if (!onboardingHelpRequested && !process.argv.includes('--json') && !process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) await maybeCheckUpdates(ENV, SELF)
 try {
-  if (resourceNoticesAllowed(process.argv.slice(2))) await maybeShowResourceNotices(ENV, loadCreds())
+  if (!onboardingHelpRequested && resourceNoticesAllowed(process.argv.slice(2))) await maybeShowResourceNotices(ENV, loadCreds())
 } catch {} // Credential loading is optional here too; the command handles its own errors.
 const SERVER_WORDS = new Set(['deploy', 'start', 'stop', 'restart', 'releases', 'rollback', 'deployments', 'inspect', 'expose', 'unexpose', 'remove', 'env', 'domain', 'allow', 'revoke', 'health'])
 const OLD_TO_NEW = { run: 'deploy', rm: 'remove', list: '', ls: '', access: 'allow', guide: 'help' }
 const LINUX_HINT = { logs: 'journalctl -u weeny-APP -f' }
 const ALIASES = { status: 'server', whoami: 'help' } // old names → orientation
 
-if (!cmd) await orient()
+if (onboardingHelpRequested) console.log(onboardingHelp)
+else if (!cmd) await orient()
 else if (cmd === '--help' || cmd === '-h') await commands.help()
 else if (account[ALIASES[cmd] ?? cmd]) await account[ALIASES[cmd] ?? cmd](process.argv.slice(3))
 else if (commands[ALIASES[cmd] ?? cmd]) await commands[ALIASES[cmd] ?? cmd]()

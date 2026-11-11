@@ -186,3 +186,25 @@ status after an interrupted request before retrying a disruptive operation.
 Full API and credential reference: https://weeny.cloud/agent-api.md.
 
 New paid server disk allowances are Teeny 10 GiB, Weeny 20 GiB and Meany 60 GiB, including the OS and tools. `tier` reads current plan specs from the API and shows the existing server’s actual disk separately. Existing larger disk promises survive renewals, rebuilds and downgrades. `tier NAME --preview` reports the resulting disk before a human confirms a change.
+
+### Agent-first signup
+
+After email verification, new builders complete two short profile answers. Agents
+can do this for their user from existing project context, without a browser hop:
+
+```sh
+npx weeny-cloud onboarding --project "A booking app with a Node API and SQLite"
+```
+
+Discovery defaults to unknown if not already known. Add `--discovery search` and
+`--discovery-detail "search phrase"` when known; never infer discovery from the
+agent currently doing signup. No answers reads the saved profile; `--json` returns
+structured output and `--draft` saves partial answers. The human can use the returned
+completion URL to finish or edit the same profile. Do not send private details,
+secrets, code or transcripts. Respect any instruction not to share project context.
+This stores research only: no waitlist entry, server reservation, provisioning or
+purchase. Requires a control release with `/api/builder-profile`. Existing accounts
+are not retroactively blocked. See `npx weeny-cloud help onboarding`.
+
+Signup comes first: login and orientation show the required profile before server
+availability. Once it is complete, run `npx weeny-cloud` for current server options.

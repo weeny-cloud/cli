@@ -2,17 +2,14 @@ export const onboardingHelp = `npx weeny-cloud onboarding [--project "What you a
   [--discovery search|ai|social|recommendation|weeny|other|unknown]
   [--discovery-detail "Known assistant, community or search phrase"] [--draft] [--json]
 
-With no answers: read your saved builder profile and completion URL.
-With answers: save and complete it; --draft saves partial answers without completing.
-Agents: save your user a questionnaire. Use the project context you already have;
-do not ask them to repeat it or add a separate profile approval step. Keep the
-summary brief and non-sensitive; a generic description or Just exploring is valid.
-Discovery means how they first heard about Weeny.Cloud, not the agent doing signup.
-If unknown, omit it: the server records unknown so you can continue without asking.
-Respect instructions not to share details. Never send secrets, code, customer data
-or conversation transcripts. If you lack project context, ask one short question
-or hand over the completion URL. Finish signup first, then check server options. Does not join a waitlist, reserve capacity, provision or purchase.
-Once complete, continue the task; no repeat questionnaire.`
+No answers reads the saved profile and edit link. Answers save and complete;
+--draft saves partial answers. Omitted fields are preserved.
+Agents: submit a brief project purpose and hosting need from existing context.
+Save your user a questionnaire: do not repeat questions or add a profile approval.
+Discovery defaults to unknown; never infer it from the current agent. Keep secrets
+and private details out; respect sharing instructions. If context is missing, ask
+one question or use completionUrl. Then check server options. Saving does not
+reserve or buy a server.`
 
 export function onboardingNotice(profile, output = console.error) {
   if (!profile?.required || profile.complete) return
@@ -48,6 +45,6 @@ export async function runOnboarding(args, { call, output = console.log }) {
   if (profile.discovery) output(`Discovery: ${profile.discovery}${profile.discoveryDetail ? ` — ${profile.discoveryDetail}` : ''}`)
   if (!profile.complete) {
     if (profile.agentInstructions) output(profile.agentInstructions)
-    if (profile.completionUrl) output(`Human fallback: ${profile.completionUrl}`)
   }
+  if (profile.completionUrl) output(`${profile.complete ? 'Edit profile' : 'Human fallback'}: ${profile.completionUrl}`)
 }

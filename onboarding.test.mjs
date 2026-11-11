@@ -76,3 +76,10 @@ test('a completed profile points to server selection as the next step', async ()
   assert.ok(f.lines.includes('Check current server options next.'))
   assert.ok(!f.lines.some(line => /Human fallback/.test(line)))
 })
+
+test('plain onboarding retains the edit URL for a completed profile without repeating signup instructions', async () => {
+  const f = fixture({ complete: true, project: 'A booking app', completionUrl: 'https://staging.weeny.cloud/onboarding', agentInstructions: 'Do not repeat this' })
+  await f.run([])
+  assert.ok(f.lines.includes('Edit profile: https://staging.weeny.cloud/onboarding'))
+  assert.ok(!f.lines.some(line => line.includes('Do not repeat this') || line.includes('Human fallback')))
+})

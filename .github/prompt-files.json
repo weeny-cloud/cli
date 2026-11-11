@@ -48,6 +48,10 @@
     {
       "glob": "**/prompts/**",
       "reason": "Nested dedicated prompt files"
+    },
+    {
+      "glob": "onboarding.mjs",
+      "reason": "Agent signup instructions and CLI teaching output (whole source file)"
     }
   ]
 }

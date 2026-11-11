@@ -756,18 +756,20 @@ SSH keys stay active. --local works offline but leaves the token valid on the se
 const account = accountCommands({ call, loadCreds, ask, interactive: !!process.stdin.isTTY, fromEnv: !!CI_CREDS,
   clearCredentials: () => rmSync(CREDS, { force: true }) })
 const cmd = process.argv[2]
+const onboardingHelpRequested = cmd === 'onboarding' && process.argv.slice(3).some(arg => arg === '--help' || arg === '-h')
 try {
 // Never put notices or optional work in CI, the explicit installer, or SSH's byte relay.
-if (!process.argv.includes('--json') && !process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) await maybeCheckUpdates(ENV, SELF)
+if (!onboardingHelpRequested && !process.argv.includes('--json') && !process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) await maybeCheckUpdates(ENV, SELF)
 try {
-  if (resourceNoticesAllowed(process.argv.slice(2))) await maybeShowResourceNotices(ENV, loadCreds())
+  if (!onboardingHelpRequested && resourceNoticesAllowed(process.argv.slice(2))) await maybeShowResourceNotices(ENV, loadCreds())
 } catch {} // Credential loading is optional here too; the command handles its own errors.
 const SERVER_WORDS = new Set(['deploy', 'start', 'stop', 'restart', 'releases', 'rollback', 'deployments', 'inspect', 'expose', 'unexpose', 'remove', 'env', 'domain', 'allow', 'revoke', 'health'])
 const OLD_TO_NEW = { run: 'deploy', rm: 'remove', list: '', ls: '', access: 'allow', guide: 'help' }
 const LINUX_HINT = { logs: 'journalctl -u weeny-APP -f' }
 const ALIASES = { status: 'server', whoami: 'help' } // old names → orientation
 
-if (!cmd) await orient()
+if (onboardingHelpRequested) console.log(onboardingHelp)
+else if (!cmd) await orient()
 else if (cmd === '--help' || cmd === '-h') await commands.help()
 else if (account[ALIASES[cmd] ?? cmd]) await account[ALIASES[cmd] ?? cmd](process.argv.slice(3))
 else if (commands[ALIASES[cmd] ?? cmd]) await commands[ALIASES[cmd] ?? cmd]()

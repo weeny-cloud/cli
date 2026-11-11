@@ -1,11 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { runOnboarding, onboardingNotice } from './onboarding.mjs'
+import { runOnboarding, onboardingNotice, onboardingHelp } from './onboarding.mjs'
 
 function fixture(profile = {}) {
   const calls = [], lines = []
@@ -82,4 +82,31 @@ test('plain onboarding retains the edit URL for a completed profile without repe
   await f.run([])
   assert.ok(f.lines.includes('Edit profile: https://staging.weeny.cloud/onboarding'))
   assert.ok(!f.lines.some(line => line.includes('Do not repeat this') || line.includes('Human fallback')))
+})
+
+
+test('onboarding --help and -h work offline without credentials, profile writes or optional network work', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'weeny-cli-onboarding-help-'))
+  try {
+    const preload = join(dir, 'offline.mjs'), attempts = join(dir, 'requests')
+    writeFileSync(preload, `import { writeFileSync } from 'node:fs';
+globalThis.fetch = async () => { writeFileSync(${JSON.stringify(attempts)}, 'unexpected request'); throw new Error('offline'); };`)
+    for (const signedIn of [false, true]) {
+      const profile = join(dir, signedIn ? 'signed-in' : 'signed-out')
+      const credentials = join(profile, 'credentials.json')
+      const saved = JSON.stringify({ token: 'fixture-help-token', apiBase: 'https://weeny.cloud' })
+      if (signedIn) { mkdirSync(profile); writeFileSync(credentials, saved) }
+      const env = { ...process.env, WEENY_ENV: 'production', WEENY_API: 'https://weeny.cloud', WEENY_CONFIG_DIR: profile }
+      for (const name of ['CI', 'WEENY_TOKEN', 'WEENY_SSH_KEY_FILE', 'WEENY_KNOWN_HOSTS_FILE']) delete env[name]
+      for (const args of [['--help'], ['-h'], ['--project', 'Do not save this', '--help']]) {
+        const result = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, fileURLToPath(new URL('./cli.mjs', import.meta.url)), 'onboarding', ...args], { env, encoding: 'utf8', timeout: 10000 })
+        assert.equal(result.status, 0, result.stderr)
+        assert.equal(result.stdout, onboardingHelp + '\n')
+        assert.equal(result.stderr, '')
+        assert.equal(existsSync(attempts), false, 'Help must not make even optional network requests')
+        if (signedIn) assert.equal(readFileSync(credentials, 'utf8'), saved)
+        else assert.equal(existsSync(profile), false, 'Help must not create a profile')
+      }
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })

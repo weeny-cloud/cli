@@ -264,10 +264,10 @@ async function orient() {
   console.log(`signed in as ${creds.email}`)
   const current = machines.filter(m => !['failed', 'deleted'].includes(m.status))
   if (!current.length) {
-    console.log('no server yet')
     const me = await call('/api/me')
+    if (me.onboarding?.required && !me.onboarding.complete) return onboardingNotice(me.onboarding)
+    console.log('no server yet')
     serverChoices(me.serverAccess, me.serverAccess?.position)
-    onboardingNotice(me.onboarding)
     return commandList()
   }
   const key = sshKeyPath()
@@ -339,8 +339,8 @@ const commands = {
     }
     writeProfile(CREDS, JSON.stringify({ email: v.email, token: v.token, apiBase: API }, null, 2))
     console.log(`✓ signed in as ${v.email}`)
+    if (v.onboarding?.required && !v.onboarding.complete) return onboardingNotice(v.onboarding)
     serverChoices(v.serverAccess, v.position ?? v.serverAccess?.position)
-    onboardingNotice(v.onboarding)
   },
 
   async create() {

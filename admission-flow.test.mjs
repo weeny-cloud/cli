@@ -426,6 +426,7 @@ test('login prompts agents to finish only incomplete required profiles, without 
         assert.match(r.stderr, /known project context/)
         assert.match(r.stderr, /without interrupting the user/)
         assert.match(r.stderr, /127.0.0.1:3123\/onboarding/)
+        assert.doesNotMatch(r.stderr, /waiting for a server|unavailable|Paid plans|charges immediately|7 days|4 GB|1 GB/)
       }
     } finally { f.close() }
   }
@@ -443,5 +444,21 @@ test('a gated create gives the agent a concrete next command without polling or 
     assert.match(r.stderr, /Human fallback/)
     assert.doesNotMatch(r.stdout, /setting up your server|your server is ready/)
     assert.equal(JSON.parse(readFileSync(join(f.profile,'credentials.json'),'utf8')).token,'test-token')
+  } finally { f.close() }
+})
+
+test('bare CLI focuses an incomplete signup on project context before any server choices', () => {
+  const f = fixture(`globalThis.fetch=async(url)=>{
+    if(url.endsWith('/api/machines')) return Response.json({machines:[]});
+    assert.equal(url,${JSON.stringify(api + '/api/me')});
+    return Response.json({onboarding:{required:true,complete:false,agentInstructions:'Save the known project context.',completionUrl:'http://127.0.0.1:3123/onboarding'},serverAccess:{status:'unrequested',offers:{trial:{available:false},free:{available:false}}}});
+  };`)
+  try {
+    const r = f.run()
+    assert.equal(r.status, 0, r.stderr)
+    assert.match(r.stderr, /onboarding --project/)
+    assert.match(r.stderr, /Save the known project context/)
+    assert.doesNotMatch(r.stderr, /unavailable|waiting for a server|Paid plans|charges immediately/)
+    assert.doesNotMatch(r.stdout, /no server yet|available trial|free server|waitlist/)
   } finally { f.close() }
 })

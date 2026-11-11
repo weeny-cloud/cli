@@ -69,3 +69,10 @@ return Response.json({project:'Booking app with SQLite',complete:true,discovery:
     assert.ok(!result.stdout.includes('test-profile-token'))
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
+
+test('a completed profile points to server selection as the next step', async () => {
+  const f = fixture({ complete: true, nextStep: 'Check current server options next.' })
+  await f.run(['--project', 'A booking app'])
+  assert.ok(f.lines.includes('Check current server options next.'))
+  assert.ok(!f.lines.some(line => /Human fallback/.test(line)))
+})

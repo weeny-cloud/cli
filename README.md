@@ -205,3 +205,6 @@ secrets, code or transcripts. Respect any instruction not to share project conte
 This stores research only: no waitlist entry, server reservation, provisioning or
 purchase. Requires a control release with `/api/builder-profile`. Existing accounts
 are not retroactively blocked. See `npx weeny-cloud help onboarding`.
+
+Signup comes first: login and orientation show the required profile before server
+availability. Once it is complete, run `npx weeny-cloud` for current server options.

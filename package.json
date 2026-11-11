@@ -26,6 +26,7 @@
     "cli.mjs",
     "account-commands.mjs",
     "feedback.mjs",
+    "onboarding.mjs",
     "environment.mjs",
     "profile.mjs",
     "ssh-command.mjs",

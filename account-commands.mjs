@@ -71,8 +71,9 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       emit(policy, options, `${app.name}: position ${policy.settings.position}; built with weeny badge ${policy.settings.branding ? 'on' : 'off'}${policy.free ? ' (required on free)' : ' (optional on paid/trial)'}`)
     },
     async billing(argv) {
-      const { args, options } = parse(argv, [], ['confirm','direct-paid'])
+      const { args, options } = parse(argv, ['id'], ['confirm','direct-paid'])
       const action = args[0] ?? 'status'
+      if (options.id && action!=='cancel-checkout') throw new Error('--id is only used with billing cancel-checkout')
       if (action === 'status' && args.length <= 1) {
         const status = await call('/api/billing/status')
         return emit(status, options, JSON.stringify(status, null, 2))
@@ -81,12 +82,29 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
         const result = await call('/api/billing/portal', { method: 'POST' })
         return emit(result, options, result.url)
       }
+      if (action === 'cancel-checkout' && args.length === 1) {
+        let purchaseId=options.id
+        if (!purchaseId) {
+          const { serverAccess }=await call('/api/me')
+          if (!serverAccess || typeof serverAccess!=='object')
+            throw new Error('Checkout status is unavailable. Retry with --id PURCHASE_ID, or check your dashboard.')
+          const purchase=serverAccess?.purchase
+          if (purchase && ['paid','provisioning','delivered','refunding'].includes(purchase.status))
+            throw new Error('This purchase has already completed or is being processed. Check billing status; use billing portal to manage an existing subscription.')
+          if (!purchase || !['held','checkout'].includes(purchase.status))
+            return emit({ok:true,cancelled:false},options,'No unpaid checkout is open. No changes made.')
+          purchaseId=purchase.id
+        }
+        const result=await call('/api/billing/cancel-checkout',{method:'POST',body:{purchaseId}})
+        return emit({...result,purchaseId,cancelled:true},options,
+          'Unpaid checkout cancelled. Your waitlist place and existing server are preserved. Free requests still depend on capacity. Retry: npx weeny-cloud create')
+      }
       if (action === 'checkout' && args.length === 2 && ['teeny','weeny','meany'].includes(args[1])) {
         if (!options.confirm) throw new Error('The human must choose this paid tier before checkout. Repeat with --confirm after their approval; the returned link does not pay.')
         const result = await call('/api/billing/checkout', { method: 'POST', body: { tier: args[1], ...(options['direct-paid'] ? { purpose: 'direct_paid' } : {}) } })
         return emit(result, options, `Human payment required: ${result.url}`)
       }
-      throw new Error('Usage: weeny-cloud billing [status|portal|checkout TIER --confirm [--direct-paid]] [--json]')
+      throw new Error('Usage: weeny-cloud billing [status|portal|cancel-checkout [--id PURCHASE_ID]|checkout TIER --confirm [--direct-paid]] [--json]')
     },
     async tier(argv) {
       const { args, options } = parse(argv, [], ['preview','confirm','force'])

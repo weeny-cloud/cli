@@ -477,3 +477,80 @@ for (const serverUrl of [undefined, api + '/dashboard/start?tier=teeny']) {
     } finally { f.close() }
   })
 }
+
+for (const json of [false,true]) {
+  test(`billing cancel-checkout uses authenticated owner HTTP APIs and reports success (${json?'JSON':'text'})`,()=>{
+    const f=fixture(`let reads=0,cancellations=0;
+globalThis.fetch=async(url,opts)=>{
+ assert.equal(opts.headers.Authorization,'Bearer test-token');
+ if(url.endsWith('/api/me')) {reads++;return Response.json({serverAccess:{purchase:{id:'pending-checkout',status:'checkout'}}});}
+ assert.equal(url,${JSON.stringify(api+'/api/billing/cancel-checkout')});
+ assert.equal(opts.method,'POST');assert.deepEqual(JSON.parse(opts.body),{purchaseId:'pending-checkout'});
+ cancellations++;return Response.json({ok:true});
+};
+process.on('exit',()=>{assert.equal(reads,1);assert.equal(cancellations,1);});`)
+    try {
+      const r=f.run('billing','cancel-checkout',...(json?['--json']:[]))
+      assert.equal(r.status,0,r.stderr)
+      if(json) {assert.deepEqual(JSON.parse(r.stdout),{ok:true,purchaseId:'pending-checkout',cancelled:true});assert.equal(r.stderr,'')}
+      else assert.match(r.stdout,/Unpaid checkout cancelled.*waitlist place/)
+      assert.equal(JSON.parse(readFileSync(join(f.profile,'credentials.json'),'utf8')).token,'test-token')
+    } finally {f.close()}
+  })
+}
+for (const status of [409,503,404]) {
+  test(`billing cancel-checkout reports HTTP ${status} without false success`,()=>{
+    const f=fixture(`globalThis.fetch=async(url,opts)=>{
+ assert.equal(url,${JSON.stringify(api+'/api/billing/cancel-checkout')});
+ assert.equal(opts.method,'POST');assert.deepEqual(JSON.parse(opts.body),{purchaseId:'pending-checkout'});
+ return Response.json({statusMessage:'Checkout cancellation was not confirmed'},{status:${status}});
+};`)
+    try {
+      const r=f.run('billing','cancel-checkout','--id','pending-checkout','--json')
+      assert.equal(r.status,1)
+      assert.equal(r.stdout,'')
+      assert.equal(JSON.parse(r.stderr).error.status,status)
+      assert.match(JSON.parse(r.stderr).error.message,/not confirmed/)
+    } finally {f.close()}
+  })
+}
+test('bare CLI points a pending checkout owner to CLI cancellation instead of another paid purchase',()=>{
+  const f=fixture(`globalThis.fetch=async(url)=>{
+ if(url.endsWith('/api/machines'))return Response.json({machines:[]});
+ assert.equal(url,${JSON.stringify(api+'/api/me')});
+ return Response.json({serverAccess:{status:'waitlisted',purchase:{id:'pending-checkout',status:'checkout'},plans:[{tier:'teeny',available:true}]}});
+};`)
+  try {
+    const r=f.run()
+    assert.equal(r.status,0,r.stderr)
+    assert.match(r.stderr,/npx weeny-cloud billing cancel-checkout/)
+    assert.doesNotMatch(r.stderr,/Paid server available|human should choose/)
+  } finally {f.close()}
+})
+for (const json of [false,true]) {
+  test(`blocked create includes a CLI cancellation recovery command (${json?'JSON':'text'})`,()=>{
+    const f=fixture(`globalThis.fetch=async(url,opts)=>{
+ assert.equal(url,${JSON.stringify(api+'/api/machines')});assert.equal(opts.method,'POST');
+ return Response.json({statusMessage:'A server purchase is already in progress.',data:{code:'exists',checkoutUrl:'https://checkout.stripe.test/fixture'}},{status:409});
+};`)
+    try {
+      const r=f.run('create',...(json?['--json']:[]))
+      assert.equal(r.status,1)
+      if(json) {
+        assert.equal(r.stdout,'')
+        assert.equal(JSON.parse(r.stderr).error.nextCommand,'npx weeny-cloud billing cancel-checkout')
+      }
+      else assert.match(r.stderr,/npx weeny-cloud billing cancel-checkout/)
+    } finally {f.close()}
+  })
+}
+test('billing help explains direct cancellation and protects paid subscriptions',()=>{
+  const f=fixture(`globalThis.fetch=()=>assert.fail('Help must not contact account APIs')`)
+  try {
+    const r=f.run('help','billing')
+    assert.equal(r.status,0,r.stderr)
+    assert.match(r.stdout,/cancel-checkout \[--id PURCHASE_ID\]/)
+    assert.match(r.stdout,/No browser or extra confirmation flag/)
+    assert.match(r.stdout,/does not cancel a paid\nsubscription/)
+  } finally {f.close()}
+})

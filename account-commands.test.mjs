@@ -103,3 +103,74 @@ test('structured server status retains measured health and resource advice witho
   assert.deepEqual(output.alerts, f.machine.alerts)
   assert.equal(output.tunnelSecret, undefined)
 })
+
+function checkoutFixture(purchase, failure) {
+  const calls=[], lines=[]
+  const commands=accountCommands({output:line=>lines.push(line),call:async(path,request={})=>{
+    calls.push({path,...request})
+    if (path==='/api/me') return {serverAccess:{purchase}}
+    assert.equal(path,'/api/billing/cancel-checkout')
+    assert.equal(request.method,'POST')
+    if (failure) throw failure
+    return {ok:true}
+  }})
+  return {commands,calls,lines}
+}
+for (const status of ['held','checkout']) {
+  test(`billing cancel-checkout discovers and cancels a ${status} purchase without paid actions`,async()=>{
+    const f=checkoutFixture({id:'purchase-one',status})
+    await f.commands.billing(['cancel-checkout','--json'])
+    assert.deepEqual(f.calls,[{path:'/api/me'},{path:'/api/billing/cancel-checkout',method:'POST',body:{purchaseId:'purchase-one'}}])
+    assert.deepEqual(JSON.parse(f.lines[0]),{ok:true,purchaseId:'purchase-one',cancelled:true})
+  })
+}
+test('billing cancel-checkout explains preserved waitlist/server and capacity without promising a server or refund',async()=>{
+  const f=checkoutFixture({id:'purchase-one',status:'checkout'})
+  await f.commands.billing(['cancel-checkout'])
+  assert.match(f.lines[0],/waitlist place and existing server are preserved/)
+  assert.match(f.lines[0],/depend on capacity/)
+  assert.match(f.lines[0],/npx weeny-cloud create/)
+  assert.doesNotMatch(f.lines[0],/refunded|server is ready|no charges/i)
+})
+for (const status of [undefined,'expired','revoked','refunded']) {
+  test(`billing cancel-checkout is a read-only no-op without a pending purchase (${status})`,async()=>{
+    const f=checkoutFixture(status?{id:'old',status}:null)
+    await f.commands.billing(['cancel-checkout','--json'])
+    assert.deepEqual(f.calls,[{path:'/api/me'}])
+    assert.deepEqual(JSON.parse(f.lines[0]),{ok:true,cancelled:false})
+  })
+}
+for (const status of ['paid','provisioning','delivered','refunding']) {
+  test(`billing cancel-checkout protects a ${status} purchase and leaves subscription cancellation to billing`,async()=>{
+    const f=checkoutFixture({id:'purchase-one',status})
+    await assert.rejects(f.commands.billing(['cancel-checkout']),/already completed or is being processed.*billing portal/)
+    assert.deepEqual(f.calls,[{path:'/api/me'}])
+    assert.deepEqual(f.lines,[])
+  })
+}
+test('billing cancel-checkout --id retries that exact purchase without selecting a newer checkout',async()=>{
+  const f=checkoutFixture({id:'newer-purchase',status:'checkout'})
+  await f.commands.billing(['cancel-checkout','--id','purchase-one','--json'])
+  assert.deepEqual(f.calls,[{path:'/api/billing/cancel-checkout',method:'POST',body:{purchaseId:'purchase-one'}}])
+  assert.deepEqual(JSON.parse(f.lines[0]),{ok:true,purchaseId:'purchase-one',cancelled:true})
+})
+for (const message of ['This checkout has completed or changed.','Checkout not found','Could not confirm checkout cancellation.']) {
+  test(`billing cancel-checkout preserves server cancellation failures: ${message}`,async()=>{
+    const failure=new Error(message), f=checkoutFixture({id:'purchase-one',status:'checkout'},failure)
+    await assert.rejects(f.commands.billing(['cancel-checkout','--json']),error=>error===failure)
+    assert.deepEqual(f.lines,[])
+    assert.equal(f.calls.length,2)
+  })
+}
+test('billing cancel-checkout does not treat missing availability as proof that no checkout exists',async()=>{
+  const calls=[],commands=accountCommands({call:async path=>{calls.push(path);return {}},output:()=>assert.fail('No success output')})
+  await assert.rejects(commands.billing(['cancel-checkout']),/Checkout status is unavailable/)
+  assert.deepEqual(calls,['/api/me'])
+})
+test('billing cancellation rejects malformed selectors and arguments before making requests',async()=>{
+  const f=checkoutFixture(null)
+  await assert.rejects(f.commands.billing(['cancel-checkout','--id']),/--id needs a value/)
+  await assert.rejects(f.commands.billing(['cancel-checkout','extra']),/Usage:/)
+  await assert.rejects(f.commands.billing(['portal','--id','purchase-one']),/only used with billing cancel-checkout/)
+  assert.deepEqual(f.calls,[])
+})

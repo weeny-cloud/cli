@@ -51,7 +51,7 @@ test('tier previews never mutate and confirmed changes pass the explicit memory 
   assert.deepEqual(f.calls.at(-1).body, { tier: 'teeny', preview: true })
   await assert.rejects(f.commands.tier(['teeny','--force']), /human pays/)
   await f.commands.tier(['teeny','--confirm','--force','--json'])
-  assert.deepEqual(f.calls.at(-1).body, { tier: 'teeny', force: true })
+  assert.deepEqual(f.calls.at(-1).body, { tier: 'teeny', monthlyUsd: 3, force: true })
 })
 test('billing links require a chosen tier for checkout and never submit payment', async () => {
   const f = fixture()

@@ -124,7 +124,8 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
         const yes = await ask(`${bs.tier} → ${want}: ${price(target)}, prorated; server reboots. ${options.force ? 'Force bypasses the memory warning. ' : ''}Confirm? (yes/no): `)
         if (!/^y(es)?$/i.test(yes)) return output('Nothing changed')
       }
-      const result = await call('/api/billing/tier', { method: 'POST', body: { tier: want, ...(options.force ? { force: true } : {}) } })
+      const monthlyUsd = bs.founding ? target.foundingUsd : target.listUsd
+      const result = await call('/api/billing/tier', { method: 'POST', body: { tier: want, monthlyUsd, ...(options.force ? { force: true } : {}) } })
       emit(result, options, result.checkoutUrl ? `Human payment required: ${result.checkoutUrl}` : `${want}${result.resizing ? ' — resizing' : ''}`)
     },
     async logout(argv) {

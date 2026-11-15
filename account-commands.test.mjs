@@ -2,9 +2,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { accountCommands } from './account-commands.mjs'
 
-function fixture() {
+function fixture({interactive=false,ask}={}) {
   const calls = [], lines = []
   const machine = { id: 'mine', name: 'server', status: 'suspended', tier: 'weeny', diskMb: 30720, tunnelSecret: 'never-print', apps: [{ id: 'a', name: 'app' }] }
+  const billing={ tier:'weeny',machineDiskGb:30,founding:true,tiers:[{name:'teeny',memGb:1,diskGb:10,vcpu:1,foundingUsd:3,listUsd:5}] }
   let policy = { free: false, enabled: true, settings: { position: 'left', branding: true } }, cleared = false
   const call = async (path, request = {}) => {
     calls.push({ path, ...request })
@@ -14,15 +15,15 @@ function fixture() {
       if (request.method === 'PUT') policy = { ...policy, settings: request.body }
       return policy
     }
-    if (path === '/api/billing/status') return { tier: 'weeny', machineDiskGb: 30, founding: true, tiers: [{ name: 'teeny', memGb: 1, diskGb: 10, vcpu: 1, foundingUsd: 3, listUsd: 5 }] }
+    if (path === '/api/billing/status') return billing
     if (path === '/api/billing/tier') return request.body.preview ? { preview: true, targetDiskMb: 30720, warning: 'memory warning' } : { tier: 'teeny', resizing: true }
     if (path === '/api/billing/portal') return { url: 'https://billing.example.test' }
     if (path === '/api/billing/checkout') return { url: 'https://checkout.example.test' }
     if (path === '/api/auth/logout') return { ok: true }
     throw new Error(`Unexpected request ${path}`)
   }
-  return { calls, lines, machine, get cleared() { return cleared }, commands: accountCommands({ call,
-    loadCreds: () => ({ token: 'fixture' }), clearCredentials: () => { cleared = true }, interactive: false,
+  return { calls, lines, machine, billing, get cleared() { return cleared }, commands: accountCommands({ call,
+    loadCreds: () => ({ token: 'fixture' }), clearCredentials: () => { cleared = true }, interactive, ask,
     output: line => lines.push(line) }) }
 }
 test('server status is structured and omits credentials; disruptive actions require explicit approval', async () => {
@@ -50,8 +51,42 @@ test('tier previews never mutate and confirmed changes pass the explicit memory 
   assert.equal(JSON.parse(f.lines.pop()).monthlyUsd, 3)
   assert.deepEqual(f.calls.at(-1).body, { tier: 'teeny', preview: true })
   await assert.rejects(f.commands.tier(['teeny','--force']), /human pays/)
-  await f.commands.tier(['teeny','--confirm','--force','--json'])
-  assert.deepEqual(f.calls.at(-1).body, { tier: 'teeny', force: true })
+  await f.commands.tier(['teeny','--confirm','--monthly-usd','3','--force','--json'])
+  assert.deepEqual(f.calls.at(-1).body, { tier: 'teeny', monthlyUsd: 3, force: true })
+})
+test('a preview approval cannot silently adopt a changed monthly price at confirmation',async()=>{
+ const f=fixture()
+ await f.commands.tier(['teeny','--preview','--json'])
+ const approved=JSON.parse(f.lines.pop()).monthlyUsd
+ assert.equal(approved,3)
+ f.billing.founding=false
+ await assert.rejects(f.commands.tier(['teeny','--confirm','--monthly-usd',String(approved)]),/price changed.*\$3.*\$5/)
+ assert.equal(f.calls.filter(c=>c.path==='/api/billing/tier'&&!c.body.preview).length,0)
+ await f.commands.tier(['teeny','--preview','--json'])
+ const renewed=JSON.parse(f.lines.pop()).monthlyUsd
+ await f.commands.tier(['teeny','--confirm','--monthly-usd',String(renewed)])
+ assert.deepEqual(f.calls.at(-1).body,{tier:'teeny',monthlyUsd:5})
+})
+test('explicit confirmation requires a valid approved amount rather than inferring approval of current pricing',async()=>{
+ const f=fixture()
+ await assert.rejects(f.commands.tier(['teeny','--confirm']),/approved preview/)
+ for(const amount of ['NaN','-1','0','infinity'])
+  await assert.rejects(f.commands.tier(['teeny','--confirm','--monthly-usd',amount]),/positive USD/)
+ assert.equal(f.calls.filter(c=>c.path==='/api/billing/tier').length,0)
+})
+test('pending plan retries display and submit the accepted price after catalogue changes',async()=>{
+ const f=fixture();f.billing.founding=false;f.billing.pendingPlanChange={tier:'teeny',monthlyUsd:3,needsRetry:true}
+ await f.commands.tier(['teeny','--preview','--json'])
+ assert.equal(JSON.parse(f.lines.pop()).monthlyUsd,3)
+ await f.commands.tier(['teeny','--confirm','--monthly-usd','3'])
+ assert.deepEqual(f.calls.at(-1).body,{tier:'teeny',monthlyUsd:3})
+})
+test('interactive confirmation binds the amount shown in its prompt',async()=>{
+ let prompt
+ const f=fixture({interactive:true,ask:async text=>{prompt=text;return 'yes'}})
+ await f.commands.tier(['teeny'])
+ assert.match(prompt,/\$3\/mo/)
+ assert.deepEqual(f.calls.at(-1).body,{tier:'teeny',monthlyUsd:3})
 })
 test('billing links require a chosen tier for checkout and never submit payment', async () => {
   const f = fixture()

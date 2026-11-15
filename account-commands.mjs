@@ -107,24 +107,30 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       throw new Error('Usage: weeny-cloud billing [status|portal|cancel-checkout [--id PURCHASE_ID]|checkout TIER --confirm [--direct-paid]] [--json]')
     },
     async tier(argv) {
-      const { args, options } = parse(argv, [], ['preview','confirm','force'])
+      const { args, options } = parse(argv, ['monthly-usd'], ['preview','confirm','force'])
       const bs = await call('/api/billing/status'), want = args[0]
-      if (args.length > 1) throw new Error('Usage: weeny-cloud tier [NAME] [--preview|--confirm] [--force] [--json]')
-      const price = t => `$${bs.founding ? t.foundingUsd : t.listUsd}/mo`
+      if (args.length > 1) throw new Error('Usage: weeny-cloud tier [NAME] [--preview|--confirm --monthly-usd AMOUNT] [--force] [--json]')
+      const monthly = t => bs.pendingPlanChange?.tier === t.name ? bs.pendingPlanChange.monthlyUsd : bs.founding ? t.foundingUsd : t.listUsd
+      const price = t => `$${monthly(t)}/mo`
       if (!want) return emit(bs, options, `Your plan: ${bs.tier}${bs.machineDiskGb == null ? '' : `; your server has ${bs.machineDiskGb} GiB disk`}\n${bs.tiers.map(t => `${t.name}: ${t.memGb} GB, ${t.vcpu} vCPU${t.diskGb == null ? '' : `, ${t.diskGb} GiB disk`}, ${price(t)} — ${t.blurb}`).join('\n')}\nPreview: weeny-cloud tier NAME --preview`)
       const target = bs.tiers.find(t => t.name === want && t.name !== 'free')
       if (!target) throw new Error('Choose teeny, weeny or meany. To return to free, cancel through billing portal.')
       if (options.preview) {
         const preview = await call('/api/billing/tier', { method: 'POST', body: { tier: want, preview: true } })
-        return emit({ ...preview, plan: target, monthlyUsd: bs.founding ? target.foundingUsd : target.listUsd }, options,
+        return emit({ ...preview, plan: target, monthlyUsd: monthly(target) }, options,
           `${bs.tier} → ${want}: ${price(target)}${preview.targetDiskMb == null ? '' : `; resulting disk ${preview.targetDiskMb / 1024} GiB`}; server reboots during resize. No change made.${preview.warning ? '\n' + preview.warning : ''}`)
       }
+      const approved = options['monthly-usd'] === undefined ? undefined : Number(options['monthly-usd'])
+      if (approved !== undefined && (!Number.isFinite(approved) || approved <= 0)) throw new Error('--monthly-usd must be a positive USD monthly amount from the approved preview')
+      if (options.confirm && approved === undefined) throw new Error('Pass --monthly-usd from the human-approved preview with --confirm; preview again if the approved amount is unknown.')
+      if (approved !== undefined && approved !== monthly(target)) throw new Error(`The monthly price changed from the approved $${approved} to $${monthly(target)}. Preview again and get renewed approval; no plan change was submitted.`)
       if (!options.confirm) {
-        if (options.json || !interactive) throw new Error(`Changing plan changes what the human pays. Ask them to choose, then use tier ${want} --confirm; use --preview first.`)
+        if (options.json || !interactive) throw new Error(`Changing plan changes what the human pays. Ask them to choose, then use tier ${want} --confirm --monthly-usd AMOUNT from the approved preview; use --preview first.`)
         const yes = await ask(`${bs.tier} → ${want}: ${price(target)}, prorated; server reboots. ${options.force ? 'Force bypasses the memory warning. ' : ''}Confirm? (yes/no): `)
         if (!/^y(es)?$/i.test(yes)) return output('Nothing changed')
       }
-      const result = await call('/api/billing/tier', { method: 'POST', body: { tier: want, ...(options.force ? { force: true } : {}) } })
+      const monthlyUsd = approved ?? monthly(target)
+      const result = await call('/api/billing/tier', { method: 'POST', body: { tier: want, monthlyUsd, ...(options.force ? { force: true } : {}) } })
       emit(result, options, result.checkoutUrl ? `Human payment required: ${result.checkoutUrl}` : `${want}${result.resizing ? ' — resizing' : ''}`)
     },
     async logout(argv) {

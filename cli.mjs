@@ -745,10 +745,11 @@ for completion for up to ten minutes. Inspect status before retrying an action.`
 Read or change appearance through the owner API, without waking the server.
 Positions: top-left, top, top-right, right, bottom-right, bottom, bottom-left, left.
 Free apps require the built with weeny badge; paid/trial apps can remove it.`,
-  tier: `weeny-cloud tier [NAME] [--preview|--confirm] [--force] [--json]
+  tier: `weeny-cloud tier [NAME] [--preview|--confirm --monthly-usd AMOUNT] [--force] [--json]
 
 Read plans; preview a change without billing; apply a human-approved change with
---confirm (or interactive confirmation). --force explicitly overrides a downgrade
+--confirm --monthly-usd AMOUNT from the approved preview (or interactive confirmation).
+A changed price needs renewed approval. --force explicitly overrides a downgrade
 memory warning. The human chooses spending. Checkout still requires payment.`,
   billing: `weeny-cloud billing [status|portal|cancel-checkout [--id PURCHASE_ID]|checkout TIER --confirm [--direct-paid]] [--json]
 

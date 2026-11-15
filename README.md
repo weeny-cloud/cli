@@ -173,7 +173,10 @@ out after one second and never fail the requested command.
 - `weeny-cloud widget APP --branding off --json`: paid/trial owners can remove the
   badge; free keeps it. `--position bottom` sets its starting position.
 - `weeny-cloud tier NAME --preview --json`: inspect a change without billing. Apply
-  only after the human chooses, with `--confirm`; `--force` overrides a memory warning.
+  only after the human chooses, with `--confirm --monthly-usd AMOUNT`, carrying the
+  preview's `monthlyUsd` unchanged (for example, `--monthly-usd 3`). A changed price
+  requires a new preview and renewed approval. Pending accepted changes show and
+  reuse their saved amount. `--force` overrides a memory warning.
 - `weeny-cloud billing portal`: human payment/invoice/cancellation link.
   `billing checkout TIER --confirm` prepares a link without paying; `--direct-paid`
   buys a first server without a trial, after the human chooses that path.

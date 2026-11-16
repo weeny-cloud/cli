@@ -241,11 +241,12 @@ function freeNotice(machine = {}) {
 // claim capacity, and the financial choice always stays with the human.
 function serverChoices(raw, position) {
   const access = accessObject(raw)
-  if (cardTrialNotice(access, API)) return
+  const trialShown = cardTrialNotice(access, API)
   if (['held','checkout'].includes(access.purchase?.status)) {
     console.error('An unpaid server checkout is open. To cancel it and keep your waitlist place: npx weeny-cloud billing cancel-checkout')
     return
   }
+  if (trialShown) return
   if (access.hasServer || ['ready', 'provisioning'].includes(access.status)) return
   if (access.offers?.trial?.available)
     console.error('Start free with 7 days at 4 GB — npx weeny-cloud create (recommended). Then the same server automatically continues at 1 GB free forever, which sleeps when idle. No card, no automatic charge; your apps and data stay. Seven days start when your server is ready.')

@@ -576,3 +576,20 @@ test('includes the public trial offer on a refused create without issuing checko
  const f=fixture(`globalThis.fetch=async(url,opts)=>{assert.equal(url,${JSON.stringify(api+'/api/machines')});assert.equal(opts.method,'POST');return Response.json({statusMessage:'Free places are full',data:{code:'waitlisted',offers:{trial:{available:false},free:{available:false}},serverUrl:'https://staging.weeny.cloud/dashboard/start',publicCardTrial:{available:true,monthlyUsd:5,paidTier:'teeny',freeFallback:false}}},{status:403});};`)
  try{const r=f.run('create');assert.notEqual(r.status,0);assert.match(r.stderr,/\$5 USD\/month/);assert.match(r.stderr,/review and start the trial/);assert.doesNotMatch(r.stderr,/charges immediately/)}finally{f.close()}
 })
+
+for (const status of ['held','checkout']) {
+ test(`pending card-trial ${status} preserves the cancellation command and invitation query`,()=>{
+  const f=fixture(`globalThis.fetch=async(url)=>url.endsWith('/api/machines')?Response.json({machines:[]}):Response.json({serverAccess:{status:'available',purchase:{status:${JSON.stringify(status)}},serverUrl:'https://staging.weeny.cloud/dashboard/start?tier=teeny#review',serverGrant:{id:'reserved & quoted',cardRequired:true,monthlyUsd:3,paidTier:'teeny',freeFallback:false}}});`)
+  try {
+   const r=f.run();assert.equal(r.status,0,r.stderr)
+   assert.match(r.stderr,/review and continue checkout/)
+   assert.match(r.stderr,/npx weeny-cloud billing cancel-checkout/)
+   const link=r.stderr.match(/https:\/\/staging\.weeny\.cloud\/dashboard\/start\S+/)[0].replace(/\.$/,'')
+   const parsed=new URL(link)
+   assert.equal(parsed.searchParams.get('tier'),'teeny')
+   assert.equal(parsed.searchParams.get('grant'),'reserved & quoted')
+   assert.equal(parsed.hash,'#review')
+   assert.doesNotMatch(r.stderr,/charges immediately without a free trial/)
+  }finally{f.close()}
+ })
+}

@@ -8,7 +8,7 @@ import { createInterface } from 'node:readline/promises'
 import { join, resolve, basename, relative, isAbsolute, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { feedbackHelp, runFeedback } from './feedback.mjs'
-import { onboardingHelp, onboardingNotice, runOnboarding, cardTrialNotice } from './onboarding.mjs'
+import { onboardingHelp, onboardingNotice, runOnboarding, serverGuidance } from './onboarding.mjs'
 import { cliEnvironment, credentialsForOrigin, credentialsFromEnv } from './environment.mjs'
 import { installSkill, maybeCheckUpdates } from './skill-updates.mjs'
 import { resourceNoticesAllowed, maybeShowResourceNotices } from './resource-notices.mjs'
@@ -67,12 +67,16 @@ async function call(path, { method = 'GET', body, auth = true } = {}) {
   }
   if (!res.ok) {
     if (json.data?.code === 'builder_profile_required' && !process.argv.includes('--json')) onboardingNotice(json.data.onboarding)
-    if (method === 'POST' && path === '/api/machines' && (json.data?.offers || json.data?.code === 'waitlisted'))
+    if (!process.argv.includes('--json') && method === 'POST' && path === '/api/machines' && (json.data?.guidance !== undefined || json.data?.offers || json.data?.code === 'waitlisted'))
       serverChoices({ ...json.data, status: 'waitlisted' }, json.data?.position)
     const cancelCheckoutCommand=method==='POST' && path==='/api/machines' && json.data?.code==='exists' && json.data?.checkoutUrl
       ? 'npx weeny-cloud billing cancel-checkout' : undefined
-    if (cancelCheckoutCommand && !process.argv.includes('--json')) console.error(`Cancel the unpaid checkout and keep your waitlist place: ${cancelCheckoutCommand}`)
-    die(json.statusMessage || json.message || `${method} ${path} → ${res.status}`, { status: res.status, data: json.data,
+    if (cancelCheckoutCommand && !process.argv.includes('--json') && typeof json.data?.guidance !== 'string') console.error(`Cancel the unpaid checkout and keep your waitlist place: ${cancelCheckoutCommand}`)
+    const currentGuidance = typeof json.data?.guidance === 'string' && json.data.guidance.trim()
+    const errorMessage = currentGuidance && !process.argv.includes('--json')
+      ? json.data.reason || `${method} ${path} → ${res.status}`
+      : json.statusMessage || json.message || `${method} ${path} → ${res.status}`
+    die(errorMessage, { status: res.status, data: json.data,
       ...(cancelCheckoutCommand ? {nextCommand:cancelCheckoutCommand} : {}) })
   }
   return json
@@ -223,51 +227,28 @@ async function runningMachine() {
 }
 
 const accessObject = access => typeof access === 'string' ? { status: access } : access ?? {}
-const idleMinutes = machine => Number(machine?.freeIdleMinutes) > 0 ? Number(machine.freeIdleMinutes) : 30
-let paidChoiceShown = false
-function paidChoice(access = {}, upgrade = false) {
-  if (paidChoiceShown || access.paid) return
-  paidChoiceShown = true
-  const url = upgrade ? `${API}/dashboard/account#billing` : access.serverUrl || `${API}/dashboard/start`
-  if (upgrade) return console.error(`Paid upgrade for always-on hosting or more RAM. Ask your human to choose: ${url}`)
-  const available = access.plans?.some(plan => plan.available)
-  console.error(`${available ? 'Paid server available' : 'Paid plans (check availability)'}. Only the human should choose a paid plan (direct paid access charges immediately without a free trial): ${url}`)
-}
-function freeNotice(machine = {}) {
-  console.error(`Free forever · 1 GB RAM · sleeps after ${idleMinutes(machine)} idle minutes; wakes on request. Your apps and data stay.`)
+function machineNotice(machine = {}) {
+  if (!serverGuidance(machine.guidance) && machine.tier === 'free')
+    console.error(`Review your server's current plan and terms: ${API}/dashboard/account#billing`)
 }
 
-// Availability is supplied by the same admission policy as create. Looking does not
-// claim capacity, and the financial choice always stays with the human.
+// The server owns offer selection, wording and financial terms. Older servers
+// get a neutral review link rather than a locally reconstructed offer.
 function serverChoices(raw, position) {
   const access = accessObject(raw)
-  const trialShown = cardTrialNotice(access, API)
-  if (['held','checkout'].includes(access.purchase?.status)) {
-    console.error('An unpaid server checkout is open. To cancel it and keep your waitlist place: npx weeny-cloud billing cancel-checkout')
-    return
-  }
-  if (trialShown) return
+  if (serverGuidance(access.guidance)) return
   if (access.hasServer || ['ready', 'provisioning'].includes(access.status)) return
-  if (access.offers?.trial?.available)
-    console.error('Start free with 7 days at 4 GB — npx weeny-cloud create (recommended). Then the same server automatically continues at 1 GB free forever, which sleeps when idle. No card, no automatic charge; your apps and data stay. Seven days start when your server is ready.')
-  else if (access.offers?.free?.available)
-    console.error(`Get a 1 GB Linux server, free forever: npx weeny-cloud create. No card or automatic charge. Sleeps after ${idleMinutes(access)} idle minutes and wakes on request.`)
-  if (access.paid && access.canCreate)
-    console.error('Your paid server is available — npx weeny-cloud create uses your purchased plan.')
-  if (access.status === 'waitlisted') {
-    console.error(`Your account is ready.${position ? ` You're #${position} on the waitlist.` : ' You are waiting for a server.'} No trial time has started.`)
-  } else if (!access.offers && access.status === 'unrequested') {
-    console.error('No server yet — check current offers with npx weeny-cloud create. Your agent will report the available free or card-required trial options.')
-  }
-  if ((access.offers && !access.offers.trial?.available && !access.offers.free?.available)
-    || (!access.offers && ['waitlisted', 'unrequested'].includes(access.status))) paidChoice(access)
+  console.error(`Review current server options with your human: ${access.serverUrl || API + '/dashboard/start'}`)
+  if (position) console.error(`Your saved waitlist position is #${position}.`)
+  if (['held','checkout'].includes(access.purchase?.status))
+    console.error('To cancel an unpaid checkout: npx weeny-cloud billing cancel-checkout')
 }
 
 // Bare `weeny-cloud`: where you stand + what to type next. Replaces status/whoami.
 async function orient() {
   const creds = loadCreds()
   if (!creds?.token) {
-    console.log(`weeny.cloud — your agent’s Linux server. HTTPS, private sharing and backups included. Sign in to see available free places and trials:`)
+    console.log(`weeny.cloud — your agent’s Linux server. HTTPS, private sharing and backups included. Sign in to see current server options:`)
     return commandList()
   }
   const { machines } = await call('/api/machines')
@@ -289,7 +270,7 @@ async function orient() {
       sshCmd = !ENV.production || m.reachable === 'tunnel' ? 'npx weeny-cloud ssh' : `ssh root@${m.ip}`
     }
     console.log(`server: ${m.status}  ${sshCmd}  ${m.error ? `(${m.error.slice(0, 60)})` : ''}`)
-    if (m.tier === 'free') freeNotice(m)
+    machineNotice(m)
   }
   console.log(`next: push code up (npx weeny-cloud push ./myapp) or go look around (npx weeny-cloud ssh)`)
   commandList()
@@ -299,7 +280,7 @@ function commandList() {
   console.log(`
   npx weeny-cloud login            sign in — weeny emails you a code
   npx weeny-cloud onboarding      complete signup from the project context your agent already has
-  npx weeny-cloud create          available trial, otherwise free, otherwise waitlist
+  npx weeny-cloud create          request a server using the current offers
   npx weeny-cloud push [folder]    deploy this folder to your server (re-push = new release)
   npx weeny-cloud ssh [command]    go to the server — that's where the power is
   npx weeny-cloud apps             every app you can reach — yours + shared with you
@@ -367,8 +348,8 @@ const commands = {
     const m = await call('/api/machines', { method: 'POST', body: { sshPublicKey: pub.key } })
     if (m.unsynced?.length) die(`Device key saved, but its server could not be reached: ${m.unsynced.join(', ')}. Retry create before connecting.`)
     if (m.waitingForCapacity) {
-      console.error(`Your request for ${m.name} is queued for ${m.capacityStatus === 'capacity_exhausted' ? 'server' : 'free'} capacity. Your account and approval are saved.${m.trialPending?' Your trial starts when the server is ready.':''}`)
-      paidChoice()
+      console.error(m.note || 'Your server request is queued. Check its current status on the server page.')
+      serverChoices(m.serverAccess ?? m)
       return
     }
     if (['sleeping', 'resuming'].includes(m.status)) await runningMachine()
@@ -384,7 +365,7 @@ const commands = {
       if (mine.status === 'failed') die(`setup failed: ${mine.error}`)
       if (mine.note && !notePrinted) { notePrinted = true; console.log(`\n${mine.note}\n(you can ctrl-c — we'll email you, and bare \`npx weeny-cloud\` shows progress)`) }
       if (mine.status === 'running') {
-        if (mine.tier === 'free') freeNotice(mine)
+        machineNotice(mine)
         const keyPath = pub.path.replace(/\.pub$/, '')
         ensureSshConfig(mine, keyPath)   // writes the direct or tunnel ssh-config block
         const creds = loadCreds()
@@ -637,8 +618,8 @@ const HELP = {
   feedback: feedbackHelp('npx weeny-cloud feedback'),
   login: `npx weeny-cloud login [--email x@y.com] [--code 123456]
 
-Start free with your own Linux server. Sign in with your email — weeny sends a 6-digit code.
-HTTPS, private sharing and backups included. No card needed.
+Sign in with your email — Weeny.Cloud sends a 6-digit code.
+After signup, the server reports current availability and terms.
 Non-interactive (for agents): pass --email first, then re-run with --email + --code.
 The code lands in the human's inbox — unless you already have access to their emails,
 stop and ask them to provide the code.
@@ -656,15 +637,11 @@ project context: npx weeny-cloud onboarding --project "Project purpose and hosti
 Unknown discovery is valid. See: npx weeny-cloud help onboarding
 
 Provision your server (~2 min): a real Linux box — root, SSH, systemd. Uses your SSH
-key (generates ~/.ssh/weeny_ed25519 if you have none). Automatically starts an
-eligible seven-day 4 GB trial when available, otherwise a 1 GB free server,
-otherwise saves a waitlist request. The trial starts at readiness, then the same
-server automatically continues at 1 GB free forever.
-No card needed, no automatic charge; your apps and data stay.
-HTTPS, private sharing, rollback and off-machine backups are included.
-The free plan sleeps after 30 idle minutes and wakes on request.
-Existing paid accounts keep their purchased plan. For always-on hosting, the human
-can choose a paid plan at ${API}/dashboard/start.
+key (generates ~/.ssh/weeny_ed25519 if you have none). The server selects the
+best eligible current offer, or saves a waitlist request. Check availability and
+terms with bare npx weeny-cloud or at ${API}/dashboard/start.
+Existing subscriptions keep their entitlement. A card-required offer needs human
+review in the dashboard; create never accepts billing terms or starts checkout.
 One server per account for now. Server controls: npx weeny-cloud help server
 Use server status, resume, suspend, rebuild or delete; disruptive actions need --confirm.`,
   push: `npx weeny-cloud push [folder] [app-name] [--build "<cmd>"] [--health "<cmd>"] [--stop "<cmd>"] [--startup-timeout <seconds>] [--tag "<text>"] [--all] [-- <start command>]

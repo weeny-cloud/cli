@@ -2,10 +2,9 @@
 
 A teeny weeny, simple wimple cloud for coding agents. Give your agent a real
 Linux server; anything it builds goes live on a public URL in seconds.
-HTTPS, private sharing, rollback and off-machine backups included. Start with
-when cardless trial places are available, seven days at 4GB, then keep the same server free forever at 1GB. No card, no
-automatic charge; your apps and data stay. Free servers sleep when idle and wake
-on request.
+HTTPS, private sharing, rollback and off-machine backups included. Sign in to see
+the current server offers and their terms. Availability and billing guidance come
+from Weeny.Cloud, so the wording stays current without updating this package.
 
 ```
 npx weeny-cloud login          # email + code, agent-driveable
@@ -75,13 +74,10 @@ staging candidates check only their staging guide, with environment-safe command
 
 ## Pricing
 
-flat plans from $3/mo (founding), no usage metering. Start free with 7 days at 4GB,
-then the same server automatically continues on the forever-free 1GB plan.
-No card needed, no automatic charge; your apps and data stay.
-`create` automatically starts an eligible trial when available, otherwise a 1GB
-free server, otherwise saves a waitlist request. The trial starts at readiness.
-Login signs in without provisioning a server. For a worker that must stay running,
-choose an always-on plan.
+See [current pricing](https://weeny.cloud/pricing). After signup, run
+`npx weeny-cloud` to read the current eligible offer and financial terms.
+`create` requests a server using the server's admission policy; it never accepts
+card-trial terms or starts checkout for the human. Login does not provision.
 
 ## Testing an unpublished release
 
@@ -218,9 +214,12 @@ are not retroactively blocked. See `npx weeny-cloud help onboarding`.
 Signup comes first: login and orientation show the required profile before server
 availability. Once it is complete, run `npx weeny-cloud` for current server options.
 
-When a card-required trial is available, the CLI reports seven free days at 4 GB,
-then the displayed Teeny monthly price at 1 GB. The human follows the review link
-and accepts card collection and automatic billing. For offers without a free
-fallback, cancellation or nonpayment stops the server and retains its apps/data.
-The CLI never starts card checkout automatically. Direct-paid purchases remain
-separate and charge the first month immediately.
+Offer guidance in login, orientation and refused creation is supplied by the server
+as `serverAccess.guidance` (also `data.guidance` on API failures). Free-plan notices
+come from each machine's `guidance`. These are plain text for display, not commands
+the CLI executes. Changing this copy requires a server release only.
+
+This CLI update is required once to use those fields; older installations cannot
+learn a new response field automatically. Older servers without guidance get a
+neutral review link instead of guessed prices, trial terms or free-fallback promises.
+Local command help, validation and transport errors remain packaged in the CLI.

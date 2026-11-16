@@ -21,7 +21,7 @@ import child from 'node:child_process';
 import {syncBuiltinESMExports} from 'node:module';
 const timer = globalThis.setTimeout;
 globalThis.setTimeout = (fn,ms,...args) => timer(fn,ms===5000?0:ms,...args);
-const machine = {id:'fixture',name:'weeny-stg-m1234abcd',status:'running',ip:'192.0.2.1',tier:'free',memMb:1024,freeIdleMinutes:17};
+const machine = {id:'fixture',name:'weeny-stg-m1234abcd',status:'running',ip:'192.0.2.1',tier:'free',memMb:1024,freeIdleMinutes:17,guidance:'Free forever · 1 GB RAM · sleeps after 17 idle minutes; wakes on request. Your apps and data stay.'};
 ${source}
 `)
   const env = { ...process.env, WEENY_ENV: 'staging', WEENY_API: api, WEENY_CONFIG_DIR: profile }
@@ -55,7 +55,7 @@ globalThis.fetch=async(url,opts)=>{
 test('default creation lets the server choose the existing entitlement without claiming free limits', () => {
   const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/machines')});
- const paid={...machine,tier:'weeny',memMb:4096};
+ const paid={...machine,tier:'weeny',guidance:'',memMb:4096};
  if(opts.method==='POST') assert.ok(!Object.hasOwn(JSON.parse(opts.body),'offer'));
  return Response.json(opts.method==='POST'?paid:{machines:[paid]});
 };`)
@@ -66,7 +66,7 @@ test('default creation lets the server choose the existing entitlement without c
   } finally { f.close() }
 })
 
-test('login accepts object availability, saves the token and offers the free start to the agent', () => {
+test('login against an older server saves the token and links to current offers', () => {
   const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/auth/verify')});
  return Response.json({status:'ok',email:'person@example.test',token:'new-token',serverAccess:{status:'available',freeIdleMinutes:17,offers:{trial:{available:false},free:{available:true}}}});
@@ -74,8 +74,8 @@ test('login accepts object availability, saves the token and offers the free sta
   try {
     const r = f.run('login', '--email', 'person@example.test', '--code', '123456')
     assert.equal(r.status, 0, r.stderr)
-    assert.match(r.stderr, /npx weeny-cloud create/)
-    assert.match(r.stderr, /Sleeps after 17 idle minutes/)
+    assert.match(r.stderr, /Review current server options with your human/)
+    assert.doesNotMatch(r.stderr, /Sleeps after|No card|free forever/)
     assert.doesNotMatch(r.stderr, /trial available|No trial time|#undefined/)
     assert.doesNotMatch(r.stdout, /1 GB|idle minutes|paid plan/)
     assert.equal(JSON.parse(readFileSync(join(f.profile, 'credentials.json'), 'utf8')).token, 'new-token')
@@ -91,9 +91,8 @@ test('bare CLI reads availability when there is no server and does not promise a
   try {
     const r = f.run()
     assert.equal(r.status, 0, r.stderr)
-    assert.match(r.stderr, /waiting for a server/)
-    assert.match(r.stderr, /Only the human should choose a paid plan/)
-    assert.match(r.stderr, /charges immediately without a free trial/)
+    assert.match(r.stderr, /Review current server options with your human/)
+    assert.doesNotMatch(r.stderr, /charges immediately|free forever|No card/)
     assert.doesNotMatch(r.stdout, /starts your free trial/)
   } finally { f.close() }
 })
@@ -114,7 +113,7 @@ test('bare CLI shows a free server once without rechecking admission or waking i
   } finally { f.close() }
 })
 
-test('create refusal prints the available free alternative without a paid detour or polling', () => {
+test('older-server create refusal preserves its reason and uses a neutral review link', () => {
   const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/machines')}); assert.equal(opts.method,'POST');
  return Response.json({statusMessage:'Full-size trials are full',data:{code:'waitlisted',freeIdleMinutes:17,offers:{trial:{available:false},free:{available:true}}}},{status:403});
@@ -122,7 +121,7 @@ test('create refusal prints the available free alternative without a paid detour
   try {
     const r = f.run('create')
     assert.equal(r.status, 1)
-    assert.match(r.stderr, /npx weeny-cloud create/)
+    assert.match(r.stderr, /Review current server options with your human/)
     assert.doesNotMatch(r.stderr, /Paid server available|Only the human should choose a paid plan/)
     assert.match(r.stderr, /Full-size trials are full/)
     assert.doesNotMatch(r.stdout, /setting up|queued/)
@@ -222,7 +221,7 @@ for (const supported of [true, false]) {
     const stop = 'printf \'%s\\n\' "$WEENY_DATA_DIR"; ./stop.sh'
     const quoted = value => "'" + value.replace(/'/g, "'\\''") + "'"
     const f = fixture(`let uploaded=false,finalized=false;
-globalThis.fetch=async()=>Response.json({machines:[{...machine,tier:'weeny',memMb:4096}]});
+globalThis.fetch=async()=>Response.json({machines:[{...machine,tier:'weeny',guidance:'',memMb:4096}]});
 child.execFileSync=(command,args)=>{
  if(command==='git') throw Error('No git metadata');
  if(command==='rsync') {uploaded=true;return '';}
@@ -265,7 +264,7 @@ test('legacy approved login does not assume an existing account needs a server',
   } finally { f.close() }
 })
 
-test('bare CLI tells an existing paid account to create its purchased server', () => {
+test('older-server paid metadata is not used to reconstruct offer copy', () => {
   const f = fixture(`globalThis.fetch=async(url)=>{
  if(url.endsWith('/api/machines')) return Response.json({machines:[]});
  return Response.json({serverAccess:{status:'available',paid:true,canCreate:true,offers:{trial:{available:false},free:{available:false}}}});
@@ -273,7 +272,7 @@ test('bare CLI tells an existing paid account to create its purchased server', (
   try {
     const r = f.run()
     assert.equal(r.status, 0, r.stderr)
-    assert.match(r.stderr, /create uses your purchased plan/)
+    assert.match(r.stderr, /Review current server options with your human/)
     assert.doesNotMatch(r.stderr, /Start free with 7 days at 4 GB|Free ·|should choose a paid/)
   } finally { f.close() }
 })
@@ -325,7 +324,7 @@ test('create does not report a device ready when its existing server key sync fa
 })
 
 for (const trialAvailable of [false, true]) {
-  test(`login recommends the trial first when trial availability is ${trialAvailable}`, () => {
+  test(`older-server login uses neutral copy when trial availability is ${trialAvailable}`, () => {
     const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/auth/verify')});
  return Response.json({status:'ok',email:'person@example.test',token:'new-token',serverAccess:{status:'available',freeIdleMinutes:17,offers:{trial:{available:${trialAvailable}},free:{available:true}},plans:[{tier:'teeny',available:true}]}});
@@ -333,17 +332,17 @@ for (const trialAvailable of [false, true]) {
     try {
       const r = f.run('login', '--email', 'person@example.test', '--code', '123456')
       assert.equal(r.status, 0, r.stderr)
-      assert.match(r.stderr, /free forever/)
+      assert.match(r.stderr, /Review current server options with your human/)
       assert.doesNotMatch(r.stderr, /--free/)
-      if (!trialAvailable) assert.match(r.stderr, /Get a 1 GB Linux server, free forever/)
+      assert.doesNotMatch(r.stderr, /free forever|7 days at 4 GB/)
       assert.doesNotMatch(r.stderr, /Paid server|paid plan|charges immediately|dashboard\/account#/)
-      if (trialAvailable) assert.match(r.stderr, /7 days at 4 GB.*recommended.*same server automatically continues/)
+
       assert.doesNotMatch(r.stdout, /paid plan|Paid server|dashboard\/account#/)
     } finally { f.close() }
   })
 }
 
-test('an unavailable trial creation leads with the available free alternative', () => {
+test('older-server refusal links to live options instead of inventing offer guidance', () => {
   const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/machines')});assert.equal(opts.method,'POST');
  return Response.json({statusMessage:'Full-size trials are full',data:{code:'waitlisted',offers:{trial:{available:false},free:{available:true}},plans:[{tier:'weeny',available:true}]}},{status:403});
@@ -351,7 +350,7 @@ test('an unavailable trial creation leads with the available free alternative', 
   try {
     const r = f.run('create')
     assert.equal(r.status, 1)
-    assert.match(r.stderr, /Get a 1 GB Linux server, free forever/)
+    assert.match(r.stderr, /Review current server options with your human/)
     assert.doesNotMatch(r.stderr, /Paid server available|dashboard\/account#/)
     assert.match(r.stderr, /Full-size trials are full/)
   } finally { f.close() }
@@ -366,7 +365,7 @@ test('a failed free claim does not repeat its human paid link', () => {
   try {
     const r = f.run('create', '--free')
     assert.equal(r.status, 1)
-    assert.match(r.stderr, /Paid server available.*Only the human should choose/)
+    assert.match(r.stderr, /Review current server options with your human/)
     assert.equal((r.stderr.match(/\/dashboard\/start/g) ?? []).length, 1)
     assert.doesNotMatch(r.stdout, /\/dashboard\/start/)
   } finally { f.close() }
@@ -375,7 +374,7 @@ test('a failed free claim does not repeat its human paid link', () => {
 test('new trial creation completes without an unsolicited paid upgrade link', () => {
   const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/machines')});
- const trial={...machine,tier:'weeny',memMb:4096,trialPending:opts.method==='POST'};
+ const trial={...machine,tier:'weeny',guidance:'',memMb:4096,trialPending:opts.method==='POST'};
  return Response.json(opts.method==='POST'?trial:{machines:[trial]});
 };`)
   try {
@@ -391,7 +390,7 @@ test('new trial creation completes without an unsolicited paid upgrade link', ()
 test('legacy --free cannot override the trial automatically chosen by the server', () => {
   const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/machines')});
- const trial={...machine,tier:'weeny',memMb:4096};
+ const trial={...machine,tier:'weeny',guidance:'',memMb:4096};
  if(opts.method==='POST') assert.deepEqual(JSON.parse(opts.body),{sshPublicKey:'ssh-ed25519 fixture-public-key fixture'});
  return Response.json(opts.method==='POST'?trial:{machines:[trial]});
 };`)
@@ -408,8 +407,8 @@ test('create help describes automatic selection without offering a free flag', (
   try {
     const r = f.run('help', 'create')
     assert.equal(r.status, 0, r.stderr)
-    assert.match(r.stdout, /trial when available, otherwise a 1 GB free server/)
-    assert.match(r.stdout, /otherwise saves a waitlist request/)
+    assert.doesNotMatch(r.stdout, /seven-day|free forever|No card needed/)
+    assert.match(r.stdout, /server selects the[\s\S]*best eligible current offer, or saves a waitlist request/)
     assert.doesNotMatch(r.stdout, /--free|skip the trial/)
   } finally { f.close() }
 })
@@ -555,41 +554,67 @@ test('billing help explains direct cancellation and protects paid subscriptions'
   } finally {f.close()}
 })
 
-test('recommends a public card trial to the human without claiming it is an immediate paid purchase', () => {
-  const f=fixture(`globalThis.fetch=async(url)=>{
-    if(url.endsWith('/api/machines'))return Response.json({machines:[]});
-    return Response.json({serverAccess:{status:'available',serverUrl:'https://staging.weeny.cloud/dashboard/start',offers:{trial:{available:false},free:{available:false}},publicCardTrial:{available:true,monthlyUsd:3,paidTier:'teeny',freeFallback:false},plans:[{tier:'teeny',available:true}]}});
+for (const entry of ['login','orientation','create']) {
+ test(`prints server-owned guidance unchanged on ${entry} without guessing from offer metadata`,()=>{
+  const guidance='CURRENT SERVER OFFER: revised capacity, price and cancellation terms. Human review: https://staging.weeny.cloud/dashboard/start'
+  const f=fixture(`globalThis.fetch=async(url,opts)=>{
+   if(url.endsWith('/api/machines')&&opts.method==='GET')return Response.json({machines:[]});
+   const access={guidance:${JSON.stringify(guidance)},offers:{trial:{available:true},free:{available:true}},publicCardTrial:{available:true,monthlyUsd:999,paidTier:'unknown'},serverGrant:{cardRequired:true,monthlyUsd:888},plans:[{available:true,monthlyUsd:777}],futurePolicy:{revision:42}};
+   if(url.endsWith('/api/auth/verify'))return Response.json({status:'ok',email:'person@example.test',token:'new-token',serverAccess:access});
+   if(url.endsWith('/api/me'))return Response.json({serverAccess:access});
+   assert.equal(url,${JSON.stringify(api+'/api/machines')});assert.equal(opts.method,'POST');
+   return Response.json({statusMessage:'A stale duplicated pitch',data:{...access,code:'waitlisted',reason:'No server was created'}},{status:403});
   };`)
   try {
-    const r=f.run();assert.equal(r.status,0,r.stderr)
-    assert.match(r.stderr,/seven days at 4 GB/);assert.match(r.stderr,/teeny at 1 GB/)
-    assert.match(r.stderr,/\$3 USD\/month/);assert.match(r.stderr,/charged automatically unless cancelled/)
-    assert.match(r.stderr,/Card required/);assert.match(r.stderr,/stops the server; no free fallback/)
-    assert.match(r.stderr,/Ask your human to review/);assert.doesNotMatch(r.stderr,/charges immediately without a free trial/)
-  }finally{f.close()}
-})
-test('explains an invited legacy card trial using its accepted price, tier and free fallback',()=>{
- const f=fixture(`globalThis.fetch=async(url)=>url.endsWith('/api/machines')?Response.json({machines:[]}):Response.json({serverAccess:{status:'available',serverUrl:'https://staging.weeny.cloud/dashboard/start',serverGrant:{id:'reserved',cardRequired:true,monthlyUsd:8,paidTier:'weeny',freeFallback:true},offers:{trial:{available:false},free:{available:false}}}});`)
- try{const r=f.run();assert.equal(r.status,0,r.stderr);assert.match(r.stderr,/weeny at 4 GB/);assert.match(r.stderr,/\$8 USD\/month/);assert.match(r.stderr,/Cancellation moves the server to 1 GB free/);assert.match(r.stderr,/start\?grant=reserved/);assert.doesNotMatch(r.stderr,/no free fallback|charges immediately/)}finally{f.close()}
-})
-test('includes the public trial offer on a refused create without issuing checkout requests',()=>{
- const f=fixture(`globalThis.fetch=async(url,opts)=>{assert.equal(url,${JSON.stringify(api+'/api/machines')});assert.equal(opts.method,'POST');return Response.json({statusMessage:'Free places are full',data:{code:'waitlisted',offers:{trial:{available:false},free:{available:false}},serverUrl:'https://staging.weeny.cloud/dashboard/start',publicCardTrial:{available:true,monthlyUsd:5,paidTier:'teeny',freeFallback:false}}},{status:403});};`)
- try{const r=f.run('create');assert.notEqual(r.status,0);assert.match(r.stderr,/\$5 USD\/month/);assert.match(r.stderr,/review and start the trial/);assert.doesNotMatch(r.stderr,/charges immediately/)}finally{f.close()}
-})
-
-for (const status of ['held','checkout']) {
- test(`pending card-trial ${status} preserves the cancellation command and invitation query`,()=>{
-  const f=fixture(`globalThis.fetch=async(url)=>url.endsWith('/api/machines')?Response.json({machines:[]}):Response.json({serverAccess:{status:'available',purchase:{status:${JSON.stringify(status)}},serverUrl:'https://staging.weeny.cloud/dashboard/start?tier=teeny#review',serverGrant:{id:'reserved & quoted',cardRequired:true,monthlyUsd:3,paidTier:'teeny',freeFallback:false}}});`)
-  try {
-   const r=f.run();assert.equal(r.status,0,r.stderr)
-   assert.match(r.stderr,/review and continue checkout/)
-   assert.match(r.stderr,/npx weeny-cloud billing cancel-checkout/)
-   const link=r.stderr.match(/https:\/\/staging\.weeny\.cloud\/dashboard\/start\S+/)[0].replace(/\.$/,'')
-   const parsed=new URL(link)
-   assert.equal(parsed.searchParams.get('tier'),'teeny')
-   assert.equal(parsed.searchParams.get('grant'),'reserved & quoted')
-   assert.equal(parsed.hash,'#review')
-   assert.doesNotMatch(r.stderr,/charges immediately without a free trial/)
+   const r=f.run(...(entry==='login'?['login','--email','person@example.test','--code','123456']:entry==='create'?['create']:[]))
+   assert.equal(r.status,entry==='create'?1:0,r.stderr)
+   assert.equal(r.stderr.split(guidance).length-1,1)
+   assert.doesNotMatch(r.stderr,/999|888|777|seven days|free forever|charges immediately|stale duplicated pitch/)
+   if(entry==='create')assert.match(r.stderr,/No server was created/)
   }finally{f.close()}
  })
 }
+
+test('changed server copy appears in the same CLI binary on the next invocation',()=>{
+ const f=fixture(`globalThis.fetch=async(url)=>{
+  if(url.endsWith('/api/machines'))return Response.json({machines:[]});
+  const text=(await import('node:fs')).readFileSync(new URL('./offer.txt',import.meta.url),'utf8');
+  return Response.json({serverAccess:{guidance:text}});
+ };`)
+ try {
+  for(const text of ['First offer from server','Different offer and terms from server']){
+   writeFileSync(join(f.dir,'offer.txt'),text)
+   const r=f.run();assert.equal(r.status,0,r.stderr);assert.ok(r.stderr.includes(text))
+  }
+ }finally{f.close()}
+})
+
+for(const guidance of [undefined,null,{},42]){
+ test(`older or malformed guidance uses a neutral fallback (${JSON.stringify(guidance)})`,()=>{
+  const f=fixture(`globalThis.fetch=async(url)=>url.endsWith('/api/machines')?Response.json({machines:[]}):Response.json({serverAccess:{guidance:${JSON.stringify(guidance)??'undefined'},serverUrl:${JSON.stringify(api+'/dashboard/start')},publicCardTrial:{available:true,monthlyUsd:999},offers:{trial:{available:true},free:{available:true}}}});`)
+  try{const r=f.run();assert.equal(r.status,0,r.stderr);assert.match(r.stderr,/Review current server options with your human/);assert.doesNotMatch(r.stderr,/999|free forever|No card|charges immediately|seven days/)}finally{f.close()}
+ })
+}
+
+test('authoritative empty guidance stays quiet',()=>{
+ const f=fixture(`globalThis.fetch=async(url)=>url.endsWith('/api/machines')?Response.json({machines:[]}):Response.json({serverAccess:{guidance:'',publicCardTrial:{available:true,monthlyUsd:999}}});`)
+ try{const r=f.run();assert.equal(r.status,0,r.stderr);assert.doesNotMatch(r.stderr,/Review current|999|trial|paid plan/)}finally{f.close()}
+})
+
+test('JSON refused creation remains one parseable error with server guidance and future fields intact',()=>{
+ const f=fixture(`globalThis.fetch=async()=>Response.json({statusMessage:'No server',data:{code:'waitlisted',guidance:'CURRENT SERVER GUIDANCE',futureField:{policy:'new'}}},{status:403});`)
+ try{const r=f.run('create','--json');assert.equal(r.status,1);assert.equal(r.stdout,'');const value=JSON.parse(r.stderr);assert.equal(value.error.data.guidance,'CURRENT SERVER GUIDANCE');assert.deepEqual(value.error.data.futureField,{policy:'new'})}finally{f.close()}
+})
+
+test('pending checkout recovery is displayed once from the server',()=>{
+ const text='Continue or cancel checkout: npx weeny-cloud billing cancel-checkout'
+ const f=fixture(`globalThis.fetch=async()=>Response.json({statusMessage:'Old error text',data:{code:'exists',guidance:${JSON.stringify(text)},reason:'An unpaid checkout exists',checkoutUrl:'https://example.test/checkout',offers:{trial:{available:false},free:{available:false}}}},{status:409});`)
+ try{const r=f.run('create');assert.equal(r.status,1);assert.equal(r.stderr.split('billing cancel-checkout').length-1,1);assert.match(r.stderr,/An unpaid checkout exists/);assert.doesNotMatch(r.stderr,/Old error text/)}finally{f.close()}
+})
+
+
+test('machine notices also display server-authored guidance for future paid-plan copy',()=>{
+ const text='CURRENT PAID MACHINE GUIDANCE FROM SERVER'
+ const f=fixture(`globalThis.fetch=async()=>Response.json({machines:[{...machine,tier:'weeny',guidance:${JSON.stringify(text)}}]});`)
+ try{const r=f.run();assert.equal(r.status,0,r.stderr);assert.equal(r.stderr.split(text).length-1,1);assert.doesNotMatch(r.stderr,/Free forever/)}finally{f.close()}
+})

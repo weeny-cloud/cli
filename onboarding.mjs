@@ -49,18 +49,9 @@ export async function runOnboarding(args, { call, output = console.log }) {
   if (profile.completionUrl) output(`${profile.complete ? 'Edit profile' : 'Human fallback'}: ${profile.completionUrl}`)
 }
 
-/** Present the current trial quote without starting billing on the human’s behalf. */
-export function cardTrialNotice(access, api, output = console.error) {
-  const cardTrial = access.serverGrant?.cardRequired ? access.serverGrant : access.publicCardTrial?.available ? access.publicCardTrial : null
-  if (cardTrial && !access.hasServer && !['ready','provisioning'].includes(access.status)) {
-    const paidTier=cardTrial.paidTier ?? 'teeny'
-    const reviewUrl=new URL(access.serverUrl || `${api}/dashboard/start`, api)
-    if(cardTrial.id) reviewUrl.searchParams.set('grant',cardTrial.id)
-    const url=reviewUrl.href
-    output(`Try Weeny.Cloud free for seven days at 4 GB, then ${paidTier} at ${paidTier==='teeny'?1:4} GB, always on, for $${cardTrial.monthlyUsd} USD/month plus applicable tax, charged automatically unless cancelled. Card required. No charge during the trial; cancel before it ends and pay nothing.`)
-    output(cardTrial.freeFallback ? 'Cancellation moves the server to 1 GB free, sleeping when idle. Apps and data stay.' : 'Cancellation or nonpayment stops the server; no free fallback. Apps and data stay until deleted.')
-    output(`Ask your human to review and ${['held','checkout'].includes(access.purchase?.status)?'continue checkout':'start the trial'}: ${url}. Do not start checkout or buy a direct-paid plan for them.`)
-    return true
-  }
-  return false
+/** Display server-authored prose only; never execute it or infer billing terms. */
+export function serverGuidance(value, output = console.error) {
+  if (typeof value !== 'string') return false
+  if (value.trim()) output(value)
+  return true
 }

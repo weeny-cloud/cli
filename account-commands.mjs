@@ -114,7 +114,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       const price = t => `$${monthly(t)}/mo`
       if (!want) return emit(bs, options, `Your plan: ${bs.tier}${bs.machineDiskGb == null ? '' : `; your server has ${bs.machineDiskGb} GiB disk`}\n${bs.tiers.map(t => `${t.name}: ${t.memGb} GB, ${t.vcpu} vCPU${t.diskGb == null ? '' : `, ${t.diskGb} GiB disk`}, ${price(t)} — ${t.blurb}`).join('\n')}\nPreview: weeny-cloud tier NAME --preview`)
       const target = bs.tiers.find(t => t.name === want && t.name !== 'free')
-      if (!target) throw new Error('Choose teeny, weeny or meany. To return to free, cancel through billing portal.')
+      if (!target) throw new Error('Choose an available paid plan from tier status. Review cancellation terms in the billing portal.')
       if (options.preview) {
         const preview = await call('/api/billing/tier', { method: 'POST', body: { tier: want, preview: true } })
         return emit({ ...preview, plan: target, monthlyUsd: monthly(target) }, options,

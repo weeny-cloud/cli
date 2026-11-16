@@ -55,7 +55,7 @@ globalThis.fetch=async(url,opts)=>{
 test('default creation lets the server choose the existing entitlement without claiming free limits', () => {
   const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/machines')});
- const paid={...machine,tier:'weeny',memMb:4096};
+ const paid={...machine,tier:'weeny',guidance:'',memMb:4096};
  if(opts.method==='POST') assert.ok(!Object.hasOwn(JSON.parse(opts.body),'offer'));
  return Response.json(opts.method==='POST'?paid:{machines:[paid]});
 };`)
@@ -221,7 +221,7 @@ for (const supported of [true, false]) {
     const stop = 'printf \'%s\\n\' "$WEENY_DATA_DIR"; ./stop.sh'
     const quoted = value => "'" + value.replace(/'/g, "'\\''") + "'"
     const f = fixture(`let uploaded=false,finalized=false;
-globalThis.fetch=async()=>Response.json({machines:[{...machine,tier:'weeny',memMb:4096}]});
+globalThis.fetch=async()=>Response.json({machines:[{...machine,tier:'weeny',guidance:'',memMb:4096}]});
 child.execFileSync=(command,args)=>{
  if(command==='git') throw Error('No git metadata');
  if(command==='rsync') {uploaded=true;return '';}
@@ -374,7 +374,7 @@ test('a failed free claim does not repeat its human paid link', () => {
 test('new trial creation completes without an unsolicited paid upgrade link', () => {
   const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/machines')});
- const trial={...machine,tier:'weeny',memMb:4096,trialPending:opts.method==='POST'};
+ const trial={...machine,tier:'weeny',guidance:'',memMb:4096,trialPending:opts.method==='POST'};
  return Response.json(opts.method==='POST'?trial:{machines:[trial]});
 };`)
   try {
@@ -390,7 +390,7 @@ test('new trial creation completes without an unsolicited paid upgrade link', ()
 test('legacy --free cannot override the trial automatically chosen by the server', () => {
   const f = fixture(`globalThis.fetch=async(url,opts)=>{
  assert.equal(url,${JSON.stringify(api + '/api/machines')});
- const trial={...machine,tier:'weeny',memMb:4096};
+ const trial={...machine,tier:'weeny',guidance:'',memMb:4096};
  if(opts.method==='POST') assert.deepEqual(JSON.parse(opts.body),{sshPublicKey:'ssh-ed25519 fixture-public-key fixture'});
  return Response.json(opts.method==='POST'?trial:{machines:[trial]});
 };`)

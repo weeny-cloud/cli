@@ -335,7 +335,7 @@ for (const trialAvailable of [false, true]) {
       assert.equal(r.status, 0, r.stderr)
       assert.match(r.stderr, /free forever/)
       assert.doesNotMatch(r.stderr, /--free/)
-      if (!trialAvailable) assert.match(r.stderr, /full-size trial is currently unavailable/)
+      if (!trialAvailable) assert.match(r.stderr, /Get a 1 GB Linux server, free forever/)
       assert.doesNotMatch(r.stderr, /Paid server|paid plan|charges immediately|dashboard\/account#/)
       if (trialAvailable) assert.match(r.stderr, /7 days at 4 GB.*recommended.*same server automatically continues/)
       assert.doesNotMatch(r.stdout, /paid plan|Paid server|dashboard\/account#/)
@@ -351,7 +351,7 @@ test('an unavailable trial creation leads with the available free alternative', 
   try {
     const r = f.run('create')
     assert.equal(r.status, 1)
-    assert.match(r.stderr, /Start at 1 GB free forever/)
+    assert.match(r.stderr, /Get a 1 GB Linux server, free forever/)
     assert.doesNotMatch(r.stderr, /Paid server available|dashboard\/account#/)
     assert.match(r.stderr, /Full-size trials are full/)
   } finally { f.close() }
@@ -553,4 +553,26 @@ test('billing help explains direct cancellation and protects paid subscriptions'
     assert.match(r.stdout,/No browser or extra confirmation flag/)
     assert.match(r.stdout,/does not cancel a paid\nsubscription/)
   } finally {f.close()}
+})
+
+test('recommends a public card trial to the human without claiming it is an immediate paid purchase', () => {
+  const f=fixture(`globalThis.fetch=async(url)=>{
+    if(url.endsWith('/api/machines'))return Response.json({machines:[]});
+    return Response.json({serverAccess:{status:'available',serverUrl:'https://staging.weeny.cloud/dashboard/start',offers:{trial:{available:false},free:{available:false}},publicCardTrial:{available:true,monthlyUsd:3,paidTier:'teeny',freeFallback:false},plans:[{tier:'teeny',available:true}]}});
+  };`)
+  try {
+    const r=f.run();assert.equal(r.status,0,r.stderr)
+    assert.match(r.stderr,/seven days at 4 GB/);assert.match(r.stderr,/teeny at 1 GB/)
+    assert.match(r.stderr,/\$3 USD\/month/);assert.match(r.stderr,/charged automatically unless cancelled/)
+    assert.match(r.stderr,/Card required/);assert.match(r.stderr,/stops the server; no free fallback/)
+    assert.match(r.stderr,/Ask your human to review/);assert.doesNotMatch(r.stderr,/charges immediately without a free trial/)
+  }finally{f.close()}
+})
+test('explains an invited legacy card trial using its accepted price, tier and free fallback',()=>{
+ const f=fixture(`globalThis.fetch=async(url)=>url.endsWith('/api/machines')?Response.json({machines:[]}):Response.json({serverAccess:{status:'available',serverUrl:'https://staging.weeny.cloud/dashboard/start',serverGrant:{id:'reserved',cardRequired:true,monthlyUsd:8,paidTier:'weeny',freeFallback:true},offers:{trial:{available:false},free:{available:false}}}});`)
+ try{const r=f.run();assert.equal(r.status,0,r.stderr);assert.match(r.stderr,/weeny at 4 GB/);assert.match(r.stderr,/\$8 USD\/month/);assert.match(r.stderr,/Cancellation moves the server to 1 GB free/);assert.match(r.stderr,/start\?grant=reserved/);assert.doesNotMatch(r.stderr,/no free fallback|charges immediately/)}finally{f.close()}
+})
+test('includes the public trial offer on a refused create without issuing checkout requests',()=>{
+ const f=fixture(`globalThis.fetch=async(url,opts)=>{assert.equal(url,${JSON.stringify(api+'/api/machines')});assert.equal(opts.method,'POST');return Response.json({statusMessage:'Free places are full',data:{code:'waitlisted',offers:{trial:{available:false},free:{available:false}},serverUrl:'https://staging.weeny.cloud/dashboard/start',publicCardTrial:{available:true,monthlyUsd:5,paidTier:'teeny',freeFallback:false}}},{status:403});};`)
+ try{const r=f.run('create');assert.notEqual(r.status,0);assert.match(r.stderr,/\$5 USD\/month/);assert.match(r.stderr,/review and start the trial/);assert.doesNotMatch(r.stderr,/charges immediately/)}finally{f.close()}
 })

@@ -3,7 +3,7 @@
 A teeny weeny, simple wimple cloud for coding agents. Give your agent a real
 Linux server; anything it builds goes live on a public URL in seconds.
 HTTPS, private sharing, rollback and off-machine backups included. Start with
-seven days at 4GB, then keep the same server free forever at 1GB. No card, no
+when cardless trial places are available, seven days at 4GB, then keep the same server free forever at 1GB. No card, no
 automatic charge; your apps and data stay. Free servers sleep when idle and wake
 on request.
 
@@ -217,3 +217,10 @@ are not retroactively blocked. See `npx weeny-cloud help onboarding`.
 
 Signup comes first: login and orientation show the required profile before server
 availability. Once it is complete, run `npx weeny-cloud` for current server options.
+
+When a card-required trial is available, the CLI reports seven free days at 4 GB,
+then the displayed Teeny monthly price at 1 GB. The human follows the review link
+and accepts card collection and automatic billing. For offers without a free
+fallback, cancellation or nonpayment stops the server and retains its apps/data.
+The CLI never starts card checkout automatically. Direct-paid purchases remain
+separate and charge the first month immediately.

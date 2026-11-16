@@ -8,7 +8,7 @@ import { createInterface } from 'node:readline/promises'
 import { join, resolve, basename, relative, isAbsolute, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { feedbackHelp, runFeedback } from './feedback.mjs'
-import { onboardingHelp, onboardingNotice, runOnboarding } from './onboarding.mjs'
+import { onboardingHelp, onboardingNotice, runOnboarding, cardTrialNotice } from './onboarding.mjs'
 import { cliEnvironment, credentialsForOrigin, credentialsFromEnv } from './environment.mjs'
 import { installSkill, maybeCheckUpdates } from './skill-updates.mjs'
 import { resourceNoticesAllowed, maybeShowResourceNotices } from './resource-notices.mjs'
@@ -241,6 +241,7 @@ function freeNotice(machine = {}) {
 // claim capacity, and the financial choice always stays with the human.
 function serverChoices(raw, position) {
   const access = accessObject(raw)
+  if (cardTrialNotice(access, API)) return
   if (['held','checkout'].includes(access.purchase?.status)) {
     console.error('An unpaid server checkout is open. To cancel it and keep your waitlist place: npx weeny-cloud billing cancel-checkout')
     return
@@ -249,13 +250,13 @@ function serverChoices(raw, position) {
   if (access.offers?.trial?.available)
     console.error('Start free with 7 days at 4 GB — npx weeny-cloud create (recommended). Then the same server automatically continues at 1 GB free forever, which sleeps when idle. No card, no automatic charge; your apps and data stay. Seven days start when your server is ready.')
   else if (access.offers?.free?.available)
-    console.error(`The full-size trial is currently unavailable. Start at 1 GB free forever: npx weeny-cloud create. No card or automatic charge. Sleeps after ${idleMinutes(access)} idle minutes and wakes on request.`)
+    console.error(`Get a 1 GB Linux server, free forever: npx weeny-cloud create. No card or automatic charge. Sleeps after ${idleMinutes(access)} idle minutes and wakes on request.`)
   if (access.paid && access.canCreate)
     console.error('Your paid server is available — npx weeny-cloud create uses your purchased plan.')
   if (access.status === 'waitlisted') {
     console.error(`Your account is ready.${position ? ` You're #${position} on the waitlist.` : ' You are waiting for a server.'} No trial time has started.`)
   } else if (!access.offers && access.status === 'unrequested') {
-    console.error('No server yet — check availability with npx weeny-cloud create. Take the seven-day 4 GB trial first, then keep the same server free forever at 1 GB.')
+    console.error('No server yet — check current offers with npx weeny-cloud create. Your agent will report the available free or card-required trial options.')
   }
   if ((access.offers && !access.offers.trial?.available && !access.offers.free?.available)
     || (!access.offers && ['waitlisted', 'unrequested'].includes(access.status))) paidChoice(access)
@@ -265,7 +266,7 @@ function serverChoices(raw, position) {
 async function orient() {
   const creds = loadCreds()
   if (!creds?.token) {
-    console.log(`weeny.cloud — your agent’s Linux server. HTTPS, private sharing and backups included. Start free, keep it free forever. Sign in to get started:`)
+    console.log(`weeny.cloud — your agent’s Linux server. HTTPS, private sharing and backups included. Sign in to see available free places and trials:`)
     return commandList()
   }
   const { machines } = await call('/api/machines')

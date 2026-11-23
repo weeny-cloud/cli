@@ -724,7 +724,7 @@ for completion for up to ten minutes. Inspect status before retrying an action.`
 Read or change appearance through the owner API, without waking the server.
 Positions: top-left, top, top-right, right, bottom-right, bottom, bottom-left, left.
 Free apps require the built with weeny badge; paid/trial apps can remove it.`,
-  tier: `weeny-cloud tier [NAME] [--preview|--confirm --monthly-usd AMOUNT] [--force] [--json]
+  tier: `weeny-cloud tier [NAME] [--preview|--confirm --monthly-usd AMOUNT --quote QUOTE] [--force] [--json]
 
 Read plans; preview a change without billing; apply a human-approved change with
 --confirm --monthly-usd AMOUNT from the approved preview (or interactive confirmation).

@@ -134,12 +134,13 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
     },
     async tier(argv) {
       const { args, options } = parse(argv, ['monthly-usd', 'quote'], ['preview','confirm','force'])
-      const bs = await call('/api/billing/status'), want = args[0]
+      const want = args[0]
       if (want === 'status' && args.length === 2) {
         const change = await call('/api/billing/plan-change/' + encodeURIComponent(args[1]))
-        return emit(change, options, `Plan change ${change.id}: ${change.phase ?? change.status}${change.error ? '\n' + change.error : ''}`)
+        return emit(change, options, `Plan change ${change.id}: ${change.status}${change.phase ? ' (' + change.phase + ')' : ''}${change.error ? '\n' + change.error : ''}`)
       }
-      if (args.length > 1) throw new Error('Usage: weeny-cloud tier [NAME] [--preview|--confirm --monthly-usd AMOUNT --quote QUOTE] [--force] [--json]')
+      if (want === 'status' || args.length > 1) throw new Error('Usage: weeny-cloud tier [NAME] [--preview|--confirm --monthly-usd AMOUNT --quote QUOTE] [--force] [--json] or tier status ID [--json]')
+      const bs = await call('/api/billing/status')
       const monthly = t => bs.pendingPlanChange?.tier === t.name ? bs.pendingPlanChange.monthlyUsd : bs.founding ? t.foundingUsd : t.listUsd
       const price = t => `$${monthly(t)}/mo`
       if (!want) return emit(bs, options, `Your plan: ${bs.tier}${bs.machineDiskGb == null ? '' : `; your server has ${bs.machineDiskGb} GiB disk`}\n${bs.tiers.map(t => `${t.name}: ${t.memGb} GB, ${t.vcpu} vCPU${t.diskGb == null ? '' : `, ${t.diskGb} GiB disk`}, ${price(t)} — ${t.blurb}`).join('\n')}\nPreview: weeny-cloud tier NAME --preview`)
@@ -172,7 +173,10 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       if (approved !== undefined && approved !== monthly(target)) throw new Error(`The monthly price changed from the approved $${approved} to $${monthly(target)}. Preview again and get renewed approval; no plan change was submitted.`)
       let quote = options.quote
       let monthlyUsd = approved ?? monthly(target)
-      if (!options.confirm) {
+      if (options.confirm) {
+        if (!quote && (await getPreview()).quote)
+          throw new Error('Pass --quote from the human-approved preview with --confirm. Run --preview again if needed.')
+      } else {
         if (options.json || !interactive) throw new Error(`Changing plan changes what the human pays. Ask them to choose, then use tier ${want} --confirm --monthly-usd AMOUNT --quote QUOTE from the approved preview; use --preview first.`)
         const preview = await getPreview()
         if (preview.available === false) throw new Error(summary(preview))
@@ -184,6 +188,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       const result = await call('/api/billing/tier', { method: 'POST', body: { tier: want, monthlyUsd, ...(quote ? { quote } : {}), ...(options.force ? { force: true } : {}) } })
       emit(result, options, result.checkoutUrl ? `Human payment required: ${result.checkoutUrl}` :
         `${want}${result.ok === false ? ' — plan change could not complete' : result.resizing ? ' — plan change in progress' : ''}${result.operationId ? `\nStatus: weeny-cloud tier status ${result.operationId}` : ''}`)
+      if (result.ok === false) return 1
     },
     async logout(argv) {
       const { args, options } = parse(argv, [], ['local'])

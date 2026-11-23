@@ -703,12 +703,6 @@ push code, start apps, expose URLs, env vars, domains, private links.
 Run again to refresh the guide, then re-read it in your agent. This does not update
 the server CLI. Normal commands check for guide updates before running, at most
 daily, with a three-second timeout. Offline checks do not fail the command.`,
-  tier: `npx weeny-cloud tier [teeny|weeny|meany]
-
-The plans. Bare = see them (specs, prices, which one you're on). With a name = change
-plan: prorated from today, and your server reboots into its new size in about a minute.
-Agents: changing plan changes what your human pays — that decision is theirs. If the
-server is tight on memory (\`weeny health\` on the box), tell them and point them here.`,
 }
 
 Object.assign(HELP, {
@@ -725,9 +719,10 @@ Read or change appearance through the owner API, without waking the server.
 Positions: top-left, top, top-right, right, bottom-right, bottom, bottom-left, left.
 Free apps require the built with weeny badge; paid/trial apps can remove it.`,
   tier: `weeny-cloud tier [NAME] [--preview|--confirm --monthly-usd AMOUNT --quote QUOTE] [--force] [--json]
+weeny-cloud tier status ID [--json]
 
-Read plans; preview a change without billing; apply a human-approved change with
---confirm --monthly-usd AMOUNT from the approved preview (or interactive confirmation).
+Preview billing and downtime, then pass --monthly-usd and --quote from the
+human-approved preview, or use interactive confirmation.
 A changed price needs renewed approval. --force explicitly overrides a downgrade
 memory warning. The human chooses spending. Checkout still requires payment.`,
   billing: `weeny-cloud billing [status|portal|end-trial [--confirm] [--reason TEXT]|cancel-checkout [--id PURCHASE_ID]|checkout TIER --confirm [--direct-paid]] [--json]
@@ -770,7 +765,10 @@ const ALIASES = { status: 'server', whoami: 'help' } // old names → orientatio
 if (onboardingHelpRequested) console.log(onboardingHelp)
 else if (!cmd) await orient()
 else if (cmd === '--help' || cmd === '-h') await commands.help()
-else if (account[ALIASES[cmd] ?? cmd]) await account[ALIASES[cmd] ?? cmd](process.argv.slice(3))
+else if (account[ALIASES[cmd] ?? cmd]) {
+  const outcome = await account[ALIASES[cmd] ?? cmd](process.argv.slice(3))
+  if (outcome === 1) process.exitCode = 1
+}
 else if (commands[ALIASES[cmd] ?? cmd]) await commands[ALIASES[cmd] ?? cmd]()
 else if (SERVER_WORDS.has(cmd) || cmd in OLD_TO_NEW || cmd in LINUX_HINT) {
   const app = process.argv[3] && !process.argv[3].startsWith('-') ? process.argv[3] : '<app>'

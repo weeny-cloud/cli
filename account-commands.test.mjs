@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { accountCommands } from './account-commands.mjs'
 
-function fixture({interactive=false,ask}={}) {
+function fixture({interactive=false,ask,tierPreview,tierResult,operation}={}) {
   const calls = [], lines = []
   const machine = { id: 'mine', name: 'server', status: 'suspended', tier: 'weeny', diskMb: 30720, tunnelSecret: 'never-print', apps: [{ id: 'a', name: 'app' }] }
   const billing={ tier:'weeny',machineDiskGb:30,founding:true,tiers:[{name:'teeny',memGb:1,diskGb:10,vcpu:1,foundingUsd:3,listUsd:5}] }
@@ -16,7 +16,8 @@ function fixture({interactive=false,ask}={}) {
       return policy
     }
     if (path === '/api/billing/status') return billing
-    if (path === '/api/billing/tier') return request.body.preview ? { preview: true, targetDiskMb: 30720, warning: 'memory warning' } : { tier: 'teeny', resizing: true }
+    if (path === '/api/billing/tier') return request.body.preview ? (tierPreview ?? { preview: true, targetDiskMb: 30720, warning: 'memory warning' }) : (tierResult ?? { ok:true, tier:'teeny', resizing:true, operationId:'op' })
+    if (path === '/api/billing/plan-change/op') return operation ?? {id:'op',tier:'teeny',status:'delivered'}
     if (path === '/api/billing/portal') return { url: 'https://billing.example.test' }
     if (path === '/api/billing/end-trial') return request.body?.reason ? { ok: true, feedbackRecorded: true } : { ok: true }
     if (path === '/api/billing/checkout') return { url: 'https://checkout.example.test' }
@@ -182,7 +183,7 @@ test('shows catalogue disk allowances separately from the existing server and re
  assert.match(f.lines.at(-1),/your server has 30 GiB disk/)
  assert.match(f.lines.at(-1),/teeny: 1 GB, 1 vCPU, 10 GiB disk/)
  await f.commands.tier(['teeny','--preview'])
- assert.match(f.lines.at(-1),/resulting disk 30 GiB/)
+ assert.match(f.lines.at(-1),/resulting disk: 30 GiB/i)
  assert.equal(f.calls.filter(c=>c.path==='/api/billing/tier'&&!c.body.preview).length,0)
 })
 
@@ -266,4 +267,77 @@ test('billing cancellation rejects malformed selectors and arguments before maki
   await assert.rejects(f.commands.billing(['cancel-checkout','extra']),/Usage:/)
   await assert.rejects(f.commands.billing(['portal','--id','purchase-one']),/only used with billing cancel-checkout/)
   assert.deepEqual(f.calls,[])
+})
+
+test('previews host downtime, binds the approved quote, and reads the operation by ID',async()=>{
+ const f=fixture({tierPreview:{preview:true,action:'move',monthlyUsd:3,immediateCents:0,
+   downtimeMinutes:5,legacyAddressChanges:true,quote:'signed-quote'}})
+ await f.commands.tier(['teeny','--preview'])
+ assert.match(f.lines.pop(),/move to another host[\s\S]*new IP address[\s\S]*--quote signed-quote/)
+ await f.commands.tier(['teeny','--confirm','--monthly-usd','3','--quote','signed-quote'])
+ assert.deepEqual(f.calls.at(-1).body,{tier:'teeny',monthlyUsd:3,quote:'signed-quote'})
+ assert.match(f.lines.pop(),/tier status op/)
+ await f.commands.tier(['status','op','--json'])
+ assert.equal(JSON.parse(f.lines.pop()).status,'delivered')
+})
+
+test('requires the approved quote on control versions that sign previews',async()=>{
+ const f=fixture({tierPreview:{preview:true,monthlyUsd:3,quote:'fresh-quote',immediateCents:300}})
+ await assert.rejects(f.commands.tier(['teeny','--confirm','--monthly-usd','3']),/Pass --quote/)
+ assert.deepEqual(f.calls.filter(c=>c.path==='/api/billing/tier').map(c=>c.body),[{tier:'teeny',preview:true}])
+})
+
+test('reports terminal billing status alongside the retained move phase',async()=>{
+ const f=fixture({operation:{id:'op',tier:'teeny',status:'failed',phase:'restored'}})
+ await f.commands.tier(['status','op'])
+ assert.match(f.lines.pop(),/failed \(restored\)/)
+ assert.deepEqual(f.calls,[{path:'/api/billing/plan-change/op'}])
+})
+
+test('invalid previews cannot authorize unsigned confirmations or interactive prompts', async () => {
+  for (const tierPreview of [{}, { preview:true, quote:null }, { preview:true, action:'resize' }]) {
+    const f=fixture({tierPreview,interactive:true,ask:()=>assert.fail('invalid preview prompted for confirmation')})
+    await assert.rejects(f.commands.tier(['teeny','--confirm','--monthly-usd','3']),/invalid plan preview/)
+    await assert.rejects(f.commands.tier(['teeny']),/invalid plan preview/)
+    assert.deepEqual(f.calls.filter(c=>c.path==='/api/billing/tier').map(c=>c.body),
+      [{tier:'teeny',preview:true},{tier:'teeny',preview:true}])
+  }
+})
+
+test('checkout previews show where the amount due will be confirmed', async () => {
+  let prompt
+  const f=fixture({tierPreview:{preview:true,action:'move',requiresCheckout:true,downtimeMinutes:5,
+    monthlyUsd:3,immediateCents:null,quote:'signed-quote'},interactive:true,ask:async text=>{prompt=text;return 'no'}})
+  await f.commands.tier(['teeny','--preview'])
+  assert.match(f.lines.pop(),/Checkout is required and will show the amount due/)
+  await f.commands.tier(['teeny'])
+  assert.match(prompt,/Checkout is required and will show the amount due/)
+  assert.match(prompt,/move to another host/)
+  assert.ok(f.calls.filter(c=>c.path==='/api/billing/tier').every(c=>c.body.preview))
+})
+
+test('an already selected tier needs no placement or confirmation', async () => {
+  const f=fixture({tierPreview:{preview:true,action:'resize',unchanged:true,available:false,monthlyUsd:3,quote:'signed-quote'},
+    interactive:true,ask:()=>assert.fail('unchanged plan prompted for confirmation')})
+  await f.commands.tier(['teeny','--preview'])
+  assert.equal(f.lines.pop(),'teeny is already selected.')
+  await f.commands.tier(['teeny'])
+  assert.equal(f.lines.pop(),'teeny is already selected.')
+  await f.commands.tier(['teeny','--confirm','--monthly-usd','3','--json'])
+  assert.deepEqual(JSON.parse(f.lines.pop()),{ok:true,tier:'teeny',unchanged:true})
+  assert.ok(f.calls.filter(c=>c.path==='/api/billing/tier').every(c=>c.body.preview))
+})
+
+test('returns a checkout link for a confirmed change that requires payment', async () => {
+  const f=fixture({tierResult:{checkoutUrl:'https://checkout.example.test'}})
+  await f.commands.tier(['teeny','--confirm','--monthly-usd','3','--quote','signed-quote'])
+  assert.equal(f.lines.pop(),'Human payment required: https://checkout.example.test')
+})
+
+test('rejects missing or mismatched plan change status replies', async () => {
+  for (const operation of [{}, {id:'op',status:''}, {id:'other',status:'delivered'}]) {
+    const f=fixture({operation})
+    await assert.rejects(f.commands.tier(['status','op','--json']),/Unable to confirm the plan change status/)
+    assert.deepEqual(f.lines,[])
+  }
 })

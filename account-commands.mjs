@@ -146,12 +146,23 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       if (!want) return emit(bs, options, `Your plan: ${bs.tier}${bs.machineDiskGb == null ? '' : `; your server has ${bs.machineDiskGb} GiB disk`}\n${bs.tiers.map(t => `${t.name}: ${t.memGb} GB, ${t.vcpu} vCPU${t.diskGb == null ? '' : `, ${t.diskGb} GiB disk`}, ${price(t)} — ${t.blurb}`).join('\n')}\nPreview: weeny-cloud tier NAME --preview`)
       const target = bs.tiers.find(t => t.name === want && t.name !== 'free')
       if (!target) throw new Error('Choose an available paid plan from tier status. Review cancellation terms in the billing portal.')
-      const getPreview = () => call('/api/billing/tier', { method:'POST',body:{tier:want,preview:true} })
+      const getPreview = async () => {
+        const preview = await call('/api/billing/tier', { method:'POST',body:{tier:want,preview:true} })
+        if (preview?.preview !== true ||
+            ((Object.hasOwn(preview, 'quote') || Object.hasOwn(preview, 'action')) &&
+              (typeof preview.quote !== 'string' || !preview.quote.trim())))
+          throw new Error('Control returned an invalid plan preview. Try --preview again.')
+        return preview
+      }
+      const pendingChange = bs.pendingPlanChange?.tier === want
+      const alreadySelected = `${want} is already selected.`
       const summary = preview => {
+        if (preview.unchanged) return alreadySelected + (pendingChange ? ' A plan change is pending.' : '')
         const details = [`${bs.tier} → ${want}: $${preview.monthlyUsd ?? monthly(target)}/mo`]
         if (preview.targetDiskMb != null) details.push(`Resulting disk: ${preview.targetDiskMb / 1024} GiB`)
         if (preview.effectiveAt) details.push(`Paid plan starts ${new Date(preview.effectiveAt).toISOString()}`)
-        if (preview.immediateCents === 0) details.push('No immediate charge.')
+        if (preview.requiresCheckout) details.push('Checkout is required and will show the amount due before you pay.')
+        else if (preview.immediateCents === 0) details.push('No immediate charge.')
         else if (preview.immediateCents > 0) details.push(`Due now: $${(preview.immediateCents / 100).toFixed(2)}.`)
         else if (preview.immediateCents < 0) details.push(`Prorated credit: $${(-preview.immediateCents / 100).toFixed(2)}.`)
         if (preview.available === false) details.push('No eligible host has room right now.')
@@ -164,7 +175,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       }
       if (options.preview) {
         const preview = await getPreview()
-        const next = preview.quote ? `\nAfter approval: weeny-cloud tier ${want} --confirm --monthly-usd ${preview.monthlyUsd} --quote ${preview.quote}` : ''
+        const next = preview.quote && (!preview.unchanged || pendingChange) ? `\nAfter approval: weeny-cloud tier ${want} --confirm --monthly-usd ${preview.monthlyUsd} --quote ${preview.quote}` : ''
         return emit({ ...preview, plan: target, monthlyUsd: preview.monthlyUsd ?? monthly(target) }, options, summary(preview) + next)
       }
       const approved = options['monthly-usd'] === undefined ? undefined : Number(options['monthly-usd'])
@@ -173,20 +184,24 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       if (approved !== undefined && approved !== monthly(target)) throw new Error(`The monthly price changed from the approved $${approved} to $${monthly(target)}. Preview again and get renewed approval; no plan change was submitted.`)
       let quote = options.quote
       let monthlyUsd = approved ?? monthly(target)
-      if (options.confirm) {
-        if (!quote && (await getPreview()).quote)
-          throw new Error('Pass --quote from the human-approved preview with --confirm. Run --preview again if needed.')
-      } else {
-        if (options.json || !interactive) throw new Error(`Changing plan changes what the human pays. Ask them to choose, then use tier ${want} --confirm --monthly-usd AMOUNT --quote QUOTE from the approved preview; use --preview first.`)
+      if (!options.confirm && (options.json || !interactive))
+        throw new Error(`Changing plan changes what the human pays. Ask them to choose, then use tier ${want} --confirm --monthly-usd AMOUNT --quote QUOTE from the approved preview; use --preview first.`)
+      if (!options.confirm || !quote) {
         const preview = await getPreview()
-        if (preview.available === false) throw new Error(summary(preview))
-        monthlyUsd = preview.monthlyUsd ?? monthlyUsd
-        quote = preview.quote
-        const yes = await ask(`${summary(preview)}\n${options.force ? 'Force bypasses the memory warning. ' : ''}Confirm? (yes/no): `)
-        if (!/^y(es)?$/i.test(yes)) return output('Nothing changed')
+        if (preview.unchanged && !pendingChange)
+          return emit({ ok: true, tier: want, unchanged: true }, options, alreadySelected)
+        if (options.confirm) {
+          if (preview.quote) throw new Error('Pass --quote from the human-approved preview with --confirm. Run --preview again if needed.')
+        } else {
+          if (preview.available === false && !preview.unchanged) throw new Error(summary(preview))
+          monthlyUsd = preview.monthlyUsd ?? monthlyUsd
+          quote = preview.quote
+          const yes = await ask(`${summary(preview)}\n${options.force ? 'Force bypasses the memory warning. ' : ''}Confirm? (yes/no): `)
+          if (!/^y(es)?$/i.test(yes)) return output('Nothing changed')
+        }
       }
       const result = await call('/api/billing/tier', { method: 'POST', body: { tier: want, monthlyUsd, ...(quote ? { quote } : {}), ...(options.force ? { force: true } : {}) } })
-      emit(result, options, result.checkoutUrl ? `Human payment required: ${result.checkoutUrl}` :
+      emit(result, options, result.checkoutUrl ? `Human payment required: ${result.checkoutUrl}` : result.unchanged ? alreadySelected :
         `${want}${result.ok === false ? ' — plan change could not complete' : result.resizing ? ' — plan change in progress' : ''}${result.operationId ? `\nStatus: weeny-cloud tier status ${result.operationId}` : ''}`)
       if (result.ok === false) return 1
     },

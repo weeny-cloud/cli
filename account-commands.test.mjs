@@ -293,3 +293,37 @@ test('reports terminal billing status alongside the retained move phase',async()
  assert.match(f.lines.pop(),/failed \(restored\)/)
  assert.deepEqual(f.calls,[{path:'/api/billing/plan-change/op'}])
 })
+
+test('invalid previews cannot authorize unsigned confirmations or interactive prompts', async () => {
+  for (const tierPreview of [{}, { preview:true, quote:null }, { preview:true, action:'resize' }]) {
+    const f=fixture({tierPreview,interactive:true,ask:()=>assert.fail('invalid preview prompted for confirmation')})
+    await assert.rejects(f.commands.tier(['teeny','--confirm','--monthly-usd','3']),/invalid plan preview/)
+    await assert.rejects(f.commands.tier(['teeny']),/invalid plan preview/)
+    assert.deepEqual(f.calls.filter(c=>c.path==='/api/billing/tier').map(c=>c.body),
+      [{tier:'teeny',preview:true},{tier:'teeny',preview:true}])
+  }
+})
+
+test('checkout previews show where the amount due will be confirmed', async () => {
+  let prompt
+  const f=fixture({tierPreview:{preview:true,action:'move',requiresCheckout:true,downtimeMinutes:5,
+    monthlyUsd:3,immediateCents:null,quote:'signed-quote'},interactive:true,ask:async text=>{prompt=text;return 'no'}})
+  await f.commands.tier(['teeny','--preview'])
+  assert.match(f.lines.pop(),/Checkout is required and will show the amount due/)
+  await f.commands.tier(['teeny'])
+  assert.match(prompt,/Checkout is required and will show the amount due/)
+  assert.match(prompt,/move to another host/)
+  assert.ok(f.calls.filter(c=>c.path==='/api/billing/tier').every(c=>c.body.preview))
+})
+
+test('an already selected tier needs no placement or confirmation', async () => {
+  const f=fixture({tierPreview:{preview:true,action:'resize',unchanged:true,available:false,monthlyUsd:3,quote:'signed-quote'},
+    interactive:true,ask:()=>assert.fail('unchanged plan prompted for confirmation')})
+  await f.commands.tier(['teeny','--preview'])
+  assert.equal(f.lines.pop(),'teeny is already selected.')
+  await f.commands.tier(['teeny'])
+  assert.equal(f.lines.pop(),'teeny is already selected.')
+  await f.commands.tier(['teeny','--confirm','--monthly-usd','3','--json'])
+  assert.deepEqual(JSON.parse(f.lines.pop()),{ok:true,tier:'teeny',unchanged:true})
+  assert.ok(f.calls.filter(c=>c.path==='/api/billing/tier').every(c=>c.body.preview))
+})

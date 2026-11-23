@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { accountCommands } from './account-commands.mjs'
 
-function fixture({interactive=false,ask,tierPreview,operation}={}) {
+function fixture({interactive=false,ask,tierPreview,tierResult,operation}={}) {
   const calls = [], lines = []
   const machine = { id: 'mine', name: 'server', status: 'suspended', tier: 'weeny', diskMb: 30720, tunnelSecret: 'never-print', apps: [{ id: 'a', name: 'app' }] }
   const billing={ tier:'weeny',machineDiskGb:30,founding:true,tiers:[{name:'teeny',memGb:1,diskGb:10,vcpu:1,foundingUsd:3,listUsd:5}] }
@@ -16,7 +16,7 @@ function fixture({interactive=false,ask,tierPreview,operation}={}) {
       return policy
     }
     if (path === '/api/billing/status') return billing
-    if (path === '/api/billing/tier') return request.body.preview ? (tierPreview ?? { preview: true, targetDiskMb: 30720, warning: 'memory warning' }) : { tier: 'teeny', resizing: true, operationId:'op' }
+    if (path === '/api/billing/tier') return request.body.preview ? (tierPreview ?? { preview: true, targetDiskMb: 30720, warning: 'memory warning' }) : (tierResult ?? { ok:true, tier:'teeny', resizing:true, operationId:'op' })
     if (path === '/api/billing/plan-change/op') return operation ?? {id:'op',tier:'teeny',status:'delivered'}
     if (path === '/api/billing/portal') return { url: 'https://billing.example.test' }
     if (path === '/api/billing/end-trial') return request.body?.reason ? { ok: true, feedbackRecorded: true } : { ok: true }
@@ -326,4 +326,18 @@ test('an already selected tier needs no placement or confirmation', async () => 
   await f.commands.tier(['teeny','--confirm','--monthly-usd','3','--json'])
   assert.deepEqual(JSON.parse(f.lines.pop()),{ok:true,tier:'teeny',unchanged:true})
   assert.ok(f.calls.filter(c=>c.path==='/api/billing/tier').every(c=>c.body.preview))
+})
+
+test('returns a checkout link for a confirmed change that requires payment', async () => {
+  const f=fixture({tierResult:{checkoutUrl:'https://checkout.example.test'}})
+  await f.commands.tier(['teeny','--confirm','--monthly-usd','3','--quote','signed-quote'])
+  assert.equal(f.lines.pop(),'Human payment required: https://checkout.example.test')
+})
+
+test('rejects missing or mismatched plan change status replies', async () => {
+  for (const operation of [{}, {id:'op',status:''}, {id:'other',status:'delivered'}]) {
+    const f=fixture({operation})
+    await assert.rejects(f.commands.tier(['status','op','--json']),/Unable to confirm the plan change status/)
+    assert.deepEqual(f.lines,[])
+  }
 })

@@ -135,8 +135,11 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
     async tier(argv) {
       const { args, options } = parse(argv, ['monthly-usd', 'quote'], ['preview','confirm','force'])
       const want = args[0]
+      const nonempty = value => typeof value === 'string' && value.trim().length > 0
       if (want === 'status' && args.length === 2) {
         const change = await call('/api/billing/plan-change/' + encodeURIComponent(args[1]))
+        if (change?.id !== args[1] || !nonempty(change.status))
+          throw new Error('Unable to confirm the plan change status. Try looking it up again.')
         return emit(change, options, `Plan change ${change.id}: ${change.status}${change.phase ? ' (' + change.phase + ')' : ''}${change.error ? '\n' + change.error : ''}`)
       }
       if (want === 'status' || args.length > 1) throw new Error('Usage: weeny-cloud tier [NAME] [--preview|--confirm --monthly-usd AMOUNT --quote QUOTE] [--force] [--json] or tier status ID [--json]')
@@ -150,7 +153,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
         const preview = await call('/api/billing/tier', { method:'POST',body:{tier:want,preview:true} })
         if (preview?.preview !== true ||
             ((Object.hasOwn(preview, 'quote') || Object.hasOwn(preview, 'action')) &&
-              (typeof preview.quote !== 'string' || !preview.quote.trim())))
+              !nonempty(preview.quote)))
           throw new Error('Control returned an invalid plan preview. Try --preview again.')
         return preview
       }
@@ -201,7 +204,10 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
         }
       }
       const result = await call('/api/billing/tier', { method: 'POST', body: { tier: want, monthlyUsd, ...(quote ? { quote } : {}), ...(options.force ? { force: true } : {}) } })
-      emit(result, options, result.checkoutUrl ? `Human payment required: ${result.checkoutUrl}` : result.unchanged ? alreadySelected :
+      const hasCheckout = nonempty(result?.checkoutUrl)
+      if (!hasCheckout && typeof result?.ok !== 'boolean')
+        throw new Error('The plan change outcome is unknown. Check weeny-cloud billing status before retrying.')
+      emit(result, options, hasCheckout ? `Human payment required: ${result.checkoutUrl}` : result.unchanged ? alreadySelected :
         `${want}${result.ok === false ? ' — plan change could not complete' : result.resizing ? ' — plan change in progress' : ''}${result.operationId ? `\nStatus: weeny-cloud tier status ${result.operationId}` : ''}`)
       if (result.ok === false) return 1
     },

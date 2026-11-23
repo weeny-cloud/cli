@@ -118,6 +118,42 @@ test('end-trial can report cancellation when the server could not record the rea
   await commands.billing(['end-trial','--confirm','--reason','Just testing','--json'])
   assert.deepEqual(JSON.parse(lines.pop()), {ok:true,feedbackRecorded:false})
 })
+for (const reason of ['Could not deploy my app', '']) {
+  test(`interactive end-trial asks for optional feedback before confirmation (${reason ? 'answered' : 'skipped'})`, async () => {
+    const prompts = []
+    const f = fixture({interactive:true,ask:async prompt => {
+      assert.equal(f.calls.some(call => call.method === 'POST'), false)
+      prompts.push(prompt)
+      return prompts.length === 1 ? reason : 'yes'
+    }})
+    Object.assign(f.billing, {status:'trialing',noFreeFallback:true})
+
+    await f.commands.billing(['end-trial'])
+
+    assert.equal(prompts.length, 2)
+    assert.match(prompts[0], /optional, Enter to skip/)
+    assert.match(prompts[1], /stop immediately .*End trial now/)
+    assert.deepEqual(f.calls, [
+      {path:'/api/billing/status'},
+      {path:'/api/billing/end-trial',method:'POST',...(reason ? {body:{reason}} : {})},
+    ])
+  })
+}
+test('interactive end-trial leaves the trial active if final confirmation is declined', async () => {
+  const answers = ['Could not deploy my app', '']
+  const f = fixture({interactive:true,ask:async () => answers.shift()})
+  f.billing.status = 'trialing'
+
+  await f.commands.billing(['end-trial'])
+
+  assert.deepEqual(f.calls, [{path:'/api/billing/status'}])
+  assert.equal(f.lines.pop(), 'Trial kept active.')
+})
+test('JSON end-trial requires approval even on a terminal', async () => {
+  const f = fixture({interactive:true,ask: () => assert.fail('JSON mode must not prompt')})
+  await assert.rejects(f.commands.billing(['end-trial','--json']), /approval/)
+  assert.deepEqual(f.calls, [])
+})
 test('logout revokes before clearing; offline logout explicitly preserves the remote token', async () => {
   const f = fixture()
   await f.commands.logout(['--json'])

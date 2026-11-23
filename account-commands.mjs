@@ -84,10 +84,24 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
         return emit(result, options, result.url)
       }
       if (action === 'end-trial' && args.length === 1) {
-        if (!options.confirm) throw new Error('Ending the trial changes server access immediately. Get the human’s approval, then repeat with --confirm.')
-        const reason = options.reason?.trim()
-        if (options.reason !== undefined && (!reason || reason.length > 600))
+        let reason = options.reason?.trim()
+        if (reason !== undefined && (!reason || reason.length > 600))
           throw new Error('--reason must be 1–600 characters when provided. Omit it to end the trial without feedback.')
+        if (!options.confirm) {
+          if (!interactive || options.json)
+            throw new Error('Ending the trial changes server access immediately. Ask for an optional reason and get the human’s approval, then repeat with --confirm.')
+          const billing = await call('/api/billing/status')
+          if (billing.status !== 'trialing') throw new Error('There is no active card trial to end. Check billing status.')
+          if (reason === undefined) {
+            reason = (await ask('Why are you leaving? (optional, Enter to skip) ')).trim()
+            while (reason.length > 600)
+              reason = (await ask('Use up to 600 characters, or press Enter to skip. ')).trim()
+          }
+          const impact = billing.noFreeFallback
+            ? 'Your server will stop immediately and you won’t be charged. Apps and data stay on disk.'
+            : 'Automatic billing will stop and your server will move to the free 1 GB plan immediately. Apps and data stay on disk.'
+          if (!/^y(es)?$/i.test(await ask(`${impact} End trial now? [y/N] `))) return output('Trial kept active.')
+        }
         const result = await call('/api/billing/end-trial', { method: 'POST', ...(reason ? { body: { reason } } : {}) })
         if (!reason) return emit(result, options, 'Trial ended.')
         const feedbackRecorded = result.feedbackRecorded === true
@@ -116,7 +130,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
         const result = await call('/api/billing/checkout', { method: 'POST', body: { tier: args[1], ...(options['direct-paid'] ? { purpose: 'direct_paid' } : {}) } })
         return emit(result, options, `Human payment required: ${result.url}`)
       }
-      throw new Error('Usage: weeny-cloud billing [status|portal|end-trial --confirm [--reason TEXT]|cancel-checkout [--id PURCHASE_ID]|checkout TIER --confirm [--direct-paid]] [--json]')
+      throw new Error('Usage: weeny-cloud billing [status|portal|end-trial [--confirm] [--reason TEXT]|cancel-checkout [--id PURCHASE_ID]|checkout TIER --confirm [--direct-paid]] [--json]')
     },
     async tier(argv) {
       const { args, options } = parse(argv, ['monthly-usd'], ['preview','confirm','force'])

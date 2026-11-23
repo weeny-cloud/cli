@@ -18,6 +18,7 @@ function fixture({interactive=false,ask}={}) {
     if (path === '/api/billing/status') return billing
     if (path === '/api/billing/tier') return request.body.preview ? { preview: true, targetDiskMb: 30720, warning: 'memory warning' } : { tier: 'teeny', resizing: true }
     if (path === '/api/billing/portal') return { url: 'https://billing.example.test' }
+    if (path === '/api/billing/end-trial') return request.body?.reason ? { ok: true, feedbackRecorded: true } : { ok: true }
     if (path === '/api/billing/checkout') return { url: 'https://checkout.example.test' }
     if (path === '/api/auth/logout') return { ok: true }
     throw new Error(`Unexpected request ${path}`)
@@ -95,6 +96,27 @@ test('billing links require a chosen tier for checkout and never submit payment'
   await assert.rejects(f.commands.billing(['checkout','teeny']), /human must choose/)
   await f.commands.billing(['checkout','teeny','--direct-paid','--confirm'])
   assert.deepEqual(f.calls.at(-1).body, { tier: 'teeny', purpose: 'direct_paid' })
+})
+test('end-trial requires approval and sends feedback only when provided', async () => {
+  const f = fixture()
+  await assert.rejects(f.commands.billing(['end-trial','--reason','Just testing']), /approval/)
+  await assert.rejects(f.commands.billing(['portal','--reason','Just testing']), /only used with billing end-trial/)
+  await assert.rejects(f.commands.billing(['end-trial','--confirm','--reason',' ']), /1–600 characters/)
+  assert.deepEqual(f.calls, [])
+
+  await f.commands.billing(['end-trial','--confirm','--reason','  Just testing  ','--json'])
+  assert.deepEqual(f.calls.pop(), {path:'/api/billing/end-trial',method:'POST',body:{reason:'Just testing'}})
+  assert.deepEqual(JSON.parse(f.lines.pop()), {ok:true,feedbackRecorded:true})
+
+  await f.commands.billing(['end-trial','--confirm'])
+  assert.deepEqual(f.calls.pop(), {path:'/api/billing/end-trial',method:'POST'})
+  assert.equal(f.lines.pop(), 'Trial ended.')
+})
+test('end-trial can report cancellation when the server could not record the reason', async () => {
+  const lines = []
+  const commands = accountCommands({call: async () => ({ok:true}), output: line => lines.push(line)})
+  await commands.billing(['end-trial','--confirm','--reason','Just testing','--json'])
+  assert.deepEqual(JSON.parse(lines.pop()), {ok:true,feedbackRecorded:false})
 })
 test('logout revokes before clearing; offline logout explicitly preserves the remote token', async () => {
   const f = fixture()

@@ -183,7 +183,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       }
       const result = await call('/api/billing/tier', { method: 'POST', body: { tier: want, monthlyUsd, ...(quote ? { quote } : {}), ...(options.force ? { force: true } : {}) } })
       emit(result, options, result.checkoutUrl ? `Human payment required: ${result.checkoutUrl}` :
-        `${want}${result.resizing ? ' — plan change in progress' : ''}${result.operationId ? `\nStatus: weeny-cloud tier status ${result.operationId}` : ''}`)
+        `${want}${result.ok === false ? ' — plan change could not complete' : result.resizing ? ' — plan change in progress' : ''}${result.operationId ? `\nStatus: weeny-cloud tier status ${result.operationId}` : ''}`)
     },
     async logout(argv) {
       const { args, options } = parse(argv, [], ['local'])

@@ -71,9 +71,10 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       emit(policy, options, `${app.name}: position ${policy.settings.position}; built with weeny badge ${policy.settings.branding ? 'on' : 'off'}${policy.free ? ' (required on free)' : ' (optional on paid/trial)'}`)
     },
     async billing(argv) {
-      const { args, options } = parse(argv, ['id'], ['confirm','direct-paid'])
+      const { args, options } = parse(argv, ['id','reason'], ['confirm','direct-paid'])
       const action = args[0] ?? 'status'
       if (options.id && action!=='cancel-checkout') throw new Error('--id is only used with billing cancel-checkout')
+      if (options.reason !== undefined && action !== 'end-trial') throw new Error('--reason is only used with billing end-trial')
       if (action === 'status' && args.length <= 1) {
         const status = await call('/api/billing/status')
         return emit(status, options, JSON.stringify(status, null, 2))
@@ -81,6 +82,31 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       if (action === 'portal' && args.length === 1) {
         const result = await call('/api/billing/portal', { method: 'POST' })
         return emit(result, options, result.url)
+      }
+      if (action === 'end-trial' && args.length === 1) {
+        let reason = options.reason?.trim()
+        if (reason !== undefined && (!reason || reason.length > 600))
+          throw new Error('--reason must be 1–600 characters when provided. Omit it to end the trial without feedback.')
+        if (!options.confirm) {
+          if (!interactive || options.json)
+            throw new Error('Ending the trial changes server access immediately. Ask for an optional reason and get the human’s approval, then repeat with --confirm.')
+          const billing = await call('/api/billing/status')
+          if (billing.status !== 'trialing') throw new Error('There is no active card trial to end. Check billing status.')
+          if (reason === undefined) {
+            reason = (await ask('Why are you leaving? (optional, Enter to skip) ')).trim()
+            while (reason.length > 600)
+              reason = (await ask('Use up to 600 characters, or press Enter to skip. ')).trim()
+          }
+          const impact = billing.noFreeFallback
+            ? 'Your server will stop immediately and you won’t be charged. Apps and data stay on disk.'
+            : 'Automatic billing will stop and your server will move to the free 1 GB plan immediately. Apps and data stay on disk.'
+          if (!/^y(es)?$/i.test(await ask(`${impact} End trial now? [y/N] `))) return output('Trial kept active.')
+        }
+        const result = await call('/api/billing/end-trial', { method: 'POST', ...(reason ? { body: { reason } } : {}) })
+        if (!reason) return emit(result, options, 'Trial ended.')
+        const feedbackRecorded = result.feedbackRecorded === true
+        return emit({ ...result, feedbackRecorded }, options,
+          feedbackRecorded ? 'Trial ended. Cancellation feedback recorded.' : 'Trial ended. Cancellation feedback was not recorded.')
       }
       if (action === 'cancel-checkout' && args.length === 1) {
         let purchaseId=options.id
@@ -104,7 +130,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
         const result = await call('/api/billing/checkout', { method: 'POST', body: { tier: args[1], ...(options['direct-paid'] ? { purpose: 'direct_paid' } : {}) } })
         return emit(result, options, `Human payment required: ${result.url}`)
       }
-      throw new Error('Usage: weeny-cloud billing [status|portal|cancel-checkout [--id PURCHASE_ID]|checkout TIER --confirm [--direct-paid]] [--json]')
+      throw new Error('Usage: weeny-cloud billing [status|portal|end-trial [--confirm] [--reason TEXT]|cancel-checkout [--id PURCHASE_ID]|checkout TIER --confirm [--direct-paid]] [--json]')
     },
     async tier(argv) {
       const { args, options } = parse(argv, ['monthly-usd'], ['preview','confirm','force'])

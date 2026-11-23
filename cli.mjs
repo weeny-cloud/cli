@@ -289,7 +289,7 @@ function commandList() {
   npx weeny-cloud server           status / resume / suspend / rebuild / delete
   npx weeny-cloud widget <app>     badge and starting position (also on the server)
   npx weeny-cloud tier             plans / preview / confirmed plan change
-  npx weeny-cloud billing          status / cancel-checkout / human billing links
+  npx weeny-cloud billing          status / end-trial / cancel-checkout / human billing links
   npx weeny-cloud logout           revoke this token and remove local credentials
   npx weeny-cloud feedback         preview feedback for Theo (send only with --confirm)
   npx weeny-cloud skill            teach your coding agent all of this
@@ -730,11 +730,16 @@ Read plans; preview a change without billing; apply a human-approved change with
 --confirm --monthly-usd AMOUNT from the approved preview (or interactive confirmation).
 A changed price needs renewed approval. --force explicitly overrides a downgrade
 memory warning. The human chooses spending. Checkout still requires payment.`,
-  billing: `weeny-cloud billing [status|portal|cancel-checkout [--id PURCHASE_ID]|checkout TIER --confirm [--direct-paid]] [--json]
+  billing: `weeny-cloud billing [status|portal|end-trial [--confirm] [--reason TEXT]|cancel-checkout [--id PURCHASE_ID]|checkout TIER --confirm [--direct-paid]] [--json]
 
 Return plans, a portal link for invoices/payment/cancellation, or a checkout link
 for the human's chosen tier. --direct-paid buys a first paid server without a trial.
 Preparing a link does not pay. Existing subscribers change size through tier.
+
+end-trial asks for optional feedback, then confirms the immediate end of a
+card-required trial. Press Enter to skip feedback. For agents and JSON mode,
+ask the human first and pass --confirm after approval. Use --reason for their
+reason or an issue you observed.
 
 cancel-checkout cancels the open unpaid checkout and preserves your waitlist place
 and existing server. No browser or extra confirmation flag is needed. --id selects

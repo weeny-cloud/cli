@@ -273,12 +273,12 @@ async function orient() {
     if (m.status === 'running') {
       try { ensureSshConfig(m, key) } catch {}
       // tunnel machines (firecracker) have no routable IP — the way in is the CLI
-      sshCmd = !ENV.production || m.reachable === 'tunnel' ? 'npx weeny-cloud ssh' + (machines.length > 1 ? ' --server ' + m.name : '') : `ssh root@${m.ip}`
+      sshCmd = !ENV.production || m.reachable === 'tunnel' ? 'npx weeny-cloud ssh' + (current.length > 1 ? ' --server ' + m.name : '') : `ssh root@${m.ip}`
     }
-    console.log(`${machines.length > 1 ? m.name : 'server'}: ${m.status}  ${sshCmd}  ${m.error ? `(${m.error.slice(0, 60)})` : ''}`)
+    console.log(`${current.length > 1 ? m.name : 'server'}: ${m.status}  ${sshCmd}  ${m.error ? `(${m.error.slice(0, 60)})` : ''}`)
     machineNotice(m)
   }
-  console.log(machines.length > 1 ? 'Pass --server NAME to push, ssh, or tier.' : 'next: push code up (npx weeny-cloud push ./myapp) or go look around (npx weeny-cloud ssh)')
+  console.log(current.length > 1 ? 'Pass --server NAME to push, ssh, or tier.' : 'next: push code up (npx weeny-cloud push ./myapp) or go look around (npx weeny-cloud ssh)')
   commandList()
 }
 
@@ -343,10 +343,12 @@ const commands = {
 
   async create() {
     const { options, args } = parseOptions(argv, ['name','tier'], ['free'])
-    if (args.length || Boolean(options.name) !== Boolean(options.tier) || (options.free && options.name))
+    const named = options.name !== undefined || options.tier !== undefined
+    if (args.length || (named && (!options.name?.trim() || !options.tier?.trim() || options.free)))
       die('Usage: weeny-cloud create [--name NAME --tier teeny|weeny|meany] [--json]')
-    if (options.name) {
-      const result = await call('/api/machines', { method: 'POST', body: { name: options.name, tier: options.tier } })
+    if (CI_CREDS) die('CI deployment credentials use an existing server; provision it from a signed-in local session first')
+    if (named) {
+      const result = await call('/api/machines/named', { method: 'POST', body: { name: options.name, tier: options.tier } })
       if (jsonOutput) return console.log(JSON.stringify(result))
       if (result.checkoutUrl) {
         console.log(`${result.name}: $${result.monthlyUsd}/month. Due now: $${(result.immediateCents / 100).toFixed(2)}.\nPay: ${result.checkoutUrl}`)
@@ -355,7 +357,6 @@ const commands = {
       console.log(`${result.name}: ${result.status}. Check with npx weeny-cloud server status.`)
       return
     }
-    if (CI_CREDS) die('CI deployment credentials use an existing server; provision it from a signed-in local session first')
     // Legacy --free is a harmless alias; selection now belongs to the server.
     let pub = findPublicKey()
     if (!pub) {
@@ -519,7 +520,7 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     if (rest[0] === '--server') {
       rest.shift()
       server = rest.shift()
-      if (!server || server.startsWith('-')) die('--server needs a name or ID')
+      if (!server?.trim() || server.startsWith('-')) die('--server needs a name or ID')
     }
     if (rest[0] === '--') rest.shift()
     else if (rest[0]?.startsWith('-')) die(`Unknown option ${rest[0]}. Pass remote arguments after the command or --.`)

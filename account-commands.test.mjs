@@ -59,6 +59,64 @@ test('an ambiguous destination never picks a running server by position', () => 
   assert.throws(()=>selectMachine([a,b]),/Pass --server.*web-a, web-b/)
   assert.equal(selectMachine([a,b],'web-a'),a)
   assert.equal(selectMachine([a,b],'id-b'),b)
+  const failed={id:'failed',name:'old',status:'failed'}
+  assert.equal(selectMachine([failed,b]),b)
+  assert.equal(selectMachine([failed,b],'failed'),failed)
+})
+
+test('blank server selectors cannot turn an explicit action into a default selection', async()=>{
+  const f=fixture()
+  for (const option of ['--id','--server'])
+    await assert.rejects(f.commands.server(['delete',option,'','--confirm']),/needs a name or ID/)
+  await assert.rejects(f.commands.tier(['teeny','--server',' ','--preview']),/needs a name or ID/)
+  assert.deepEqual(f.calls,[])
+})
+
+test('scoped plan changes fail on legacy Control and use the confirmed canonical server on current Control',async()=>{
+  const {billing}=fixture(), calls=[], lines=[]
+  let supported=false
+  const commands=accountCommands({
+    call:async(path,options)=>{
+      calls.push({path,...options})
+      if (path==='/api/machines/web-b/tier' && !options)
+        return supported ? {...billing,machineId:'second-id'} : billing
+      assert.equal(path,'/api/machines/second-id/tier')
+      if (!options) return {...billing,machineId:'second-id'}
+      return options.body.preview
+        ? {preview:true,quote:'scoped-quote',monthlyUsd:3,renewalResumesAt:'2026-12-01T00:00:00Z'}
+        : {ok:true,tier:'teeny'}
+    },
+    output:line=>lines.push(line),
+  })
+  const confirmation=['teeny','--server','web-b','--confirm','--monthly-usd','3','--quote','scoped-quote']
+  await assert.rejects(commands.tier(confirmation),/confirm the selected server/)
+  assert.equal(calls.length,1)
+  supported=true
+  await commands.tier(['teeny','--server','web-b','--preview'])
+  assert.match(lines.at(-1),/Renewal resumes on 2026-12-01/)
+  assert.match(lines.at(-1),/--server second-id/)
+  await commands.tier(confirmation)
+  assert.deepEqual(calls.at(-1),{path:'/api/machines/second-id/tier',method:'POST',
+    body:{tier:'teeny',monthlyUsd:3,quote:'scoped-quote'}})
+})
+
+test('an approved retirement can be retried by ID and --wait observes the deletion',async()=>{
+  const calls=[], lines=[]
+  const commands=accountCommands({
+    call:async(path,options)=>{
+      calls.push(path)
+      if (path==='/api/machines/mine/retire') {
+        assert.deepEqual(options,{method:'POST',body:{quote:'retire-receipt'}})
+        return {id:'retire-receipt',machineId:'mine',name:'web-b',summary:'Retirement queued.',status:'complete'}
+      }
+      assert.equal(path,'/api/machines')
+      return {machines:[]}
+    },
+    output:line=>lines.push(line),
+  })
+  await commands.server(['retire','--server','mine','--confirm','--quote','retire-receipt','--wait','--json'])
+  assert.deepEqual(calls,['/api/machines/mine/retire','/api/machines'])
+  assert.equal(JSON.parse(lines[0]).machineStatus,'deleted')
 })
 test('server status is structured and omits credentials; disruptive actions require explicit approval', async () => {
   const f = fixture()

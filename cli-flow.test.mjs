@@ -34,6 +34,39 @@ globalThis.fetch = async (url,opts) => {
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
+test('named create uses its own endpoint and rejects blank and CI requests before fetching', () => {
+  const dir=mkdtempSync(join(tmpdir(),'weeny-cli-named-create-'))
+  try {
+    const profile=join(dir,'profile'), preload=join(dir,'fixture.mjs'), api='http://127.0.0.1:3123'
+    mkdirSync(profile)
+    writeFileSync(join(profile,'credentials.json'),JSON.stringify({token:'test-token',apiBase:api}))
+    writeFileSync(preload,`import assert from 'node:assert/strict'
+globalThis.fetch=async (url,opts)=>{
+  assert.equal(process.env.WEENY_TEST_FORBID_HTTP,undefined)
+  assert.equal(url,'${api}/api/machines/named')
+  assert.equal(opts.method,'POST')
+  assert.deepEqual(JSON.parse(opts.body),{name:'web-b',tier:'teeny'})
+  return Response.json({name:'web-b',status:'checkout',checkoutUrl:'https://billing.example.test/pay'})
+};`)
+    const env={...process.env,WEENY_ENV:'staging',WEENY_API:api,WEENY_CONFIG_DIR:profile}
+    delete env.WEENY_TOKEN; delete env.WEENY_SSH_KEY_FILE; delete env.WEENY_KNOWN_HOSTS_FILE
+    const args=['--import',pathToFileURL(preload).href,fileURLToPath(new URL('./cli.mjs',import.meta.url)),'create','--json']
+    const run=(options,extra={})=>spawnSync(process.execPath,[...args,...options],{env:{...env,...extra},encoding:'utf8',timeout:10000})
+    const good=run(['--name','web-b','--tier','teeny'])
+    assert.equal(good.status,0,good.stderr)
+    assert.equal(JSON.parse(good.stdout).name,'web-b')
+    const rejected=run(['--name','','--tier',''],{WEENY_TEST_FORBID_HTTP:'1'})
+    assert.equal(rejected.status,1)
+    assert.match(JSON.parse(rejected.stderr).error.message,/Usage:.*create/)
+    const ci=run(['--name','web-b','--tier','teeny'],{
+      WEENY_TEST_FORBID_HTTP:'1',WEENY_TOKEN:'weeny_fixturedeploymenttoken',WEENY_SSH_KEY_FILE:join(dir,'id'),
+      WEENY_KNOWN_HOSTS_FILE:join(dir,'known_hosts'),
+    })
+    assert.equal(ci.status,1)
+    assert.match(JSON.parse(ci.stderr).error.message,/CI deployment credentials use an existing server/)
+  } finally { rmSync(dir,{recursive:true,force:true}) }
+})
+
 
 test('legacy waitlisted login saves an origin-bound token and links to current offers', () => {
   const dir=mkdtempSync(join(tmpdir(),'weeny-cli-waitlist-'))

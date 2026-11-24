@@ -139,6 +139,37 @@ test('an approved retirement can be retried by ID and --wait observes the deleti
   assert.deepEqual(calls,['/api/machines/mine/retire','/api/machines'])
   assert.equal(JSON.parse(lines[0]).machineStatus,'deleted')
 })
+
+test('tier defaults to the one remaining consolidated server and verifies its ID before changing the plan', async () => {
+  const { billing } = fixture(), calls = [], lines = []
+  let machineId = 'remaining-id'
+  const { tier } = accountCommands({
+    call: async (path, options) => {
+      calls.push({ path, ...options })
+      if (path === '/api/billing/status') return { ...billing, tier: 'free', consolidated: true, servers: [
+        { id: 'retired-id', name: 'web-a', machineStatus: 'deleted' },
+        { id: 'remaining-id', name: 'web-b', machineStatus: 'running' },
+      ] }
+      assert.equal(path, '/api/machines/remaining-id/tier')
+      if (!options) return { ...billing, machineId }
+      return options.body.preview ? { preview: true, quote: 'approved', monthlyUsd: 3 } : { ok: true, tier: 'teeny' }
+    },
+    output: line => lines.push(line),
+  })
+  await tier(['--json'])
+  assert.equal(JSON.parse(lines.at(-1)).tier, billing.tier)
+  await tier(['teeny','--preview'])
+  assert.match(lines.at(-1), /weeny → teeny.*\n.*\nAfter approval:.*--server remaining-id/)
+
+  const confirm = ['teeny','--confirm','--monthly-usd','3','--quote','approved']
+  await tier(confirm)
+  assert.deepEqual(calls.at(-1), { path: '/api/machines/remaining-id/tier', method: 'POST',
+    body: { tier: 'teeny', monthlyUsd: 3, quote: 'approved' },
+  })
+  machineId = 'different-id'
+  await assert.rejects(tier(confirm), /confirm the selected server/)
+  assert.deepEqual(calls.at(-1), { path: '/api/machines/remaining-id/tier' })
+})
 test('server status is structured and omits credentials; disruptive actions require explicit approval', async () => {
   const f = fixture()
   await f.commands.server(['status', '--json'])

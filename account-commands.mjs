@@ -241,13 +241,19 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
         return emit(change, options, `Plan change ${change.id}: ${change.status}${change.phase ? ' (' + change.phase + ')' : ''}${change.error ? '\n' + change.error : ''}`)
       }
       if (want === 'status' || args.length > 1) throw new Error('Usage: weeny-cloud tier [NAME] [--preview|--confirm --monthly-usd AMOUNT --quote QUOTE] [--force] [--json] or tier status ID [--json]')
-      const scoped = options.server !== undefined
-      const bs = await call(scoped ? `/api/machines/${encodeURIComponent(options.server)}/tier` : '/api/billing/status')
-      if (scoped && !nonempty(bs?.machineId)) throw new Error('Control could not confirm the selected server. Check server status before changing its plan.')
-      const tierPath = scoped ? `/api/machines/${encodeURIComponent(bs.machineId)}/tier` : '/api/billing/tier'
-      const currentServers = bs.servers?.filter(m => !['failed','deleted'].includes(m.machineStatus))
-      if (!scoped && currentServers?.length > 1)
+      const accountBilling = options.server === undefined ? await call('/api/billing/status') : undefined
+      const currentServers = accountBilling?.servers?.filter(m => !['failed','deleted'].includes(m.machineStatus))
+      if (currentServers?.length > 1)
         throw new Error(`Pass --server with one of: ${currentServers.map(m => m.name).join(', ')}`)
+      const soleServer = accountBilling?.consolidated === true && currentServers?.length === 1 ? currentServers[0] : undefined
+      const selector = options.server ?? soleServer?.id
+      const unknownServer = 'Control could not confirm the selected server. Check server status before changing its plan.'
+      if (soleServer && !nonempty(selector)) throw new Error(unknownServer)
+      const machineTierPath = server => `/api/machines/${encodeURIComponent(server)}/tier`
+      const scoped = selector !== undefined
+      const bs = scoped ? await call(machineTierPath(selector)) : accountBilling
+      if (scoped && (!nonempty(bs?.machineId) || (soleServer && bs.machineId !== soleServer.id))) throw new Error(unknownServer)
+      const tierPath = scoped ? machineTierPath(bs.machineId) : '/api/billing/tier'
       const monthly = t => bs.pendingPlanChange?.tier === t.name ? bs.pendingPlanChange.monthlyUsd : bs.founding ? t.foundingUsd : t.listUsd
       const price = t => `$${monthly(t)}/mo`
       if (!want) return emit(bs, options, `Your plan: ${bs.tier}${bs.machineDiskGb == null ? '' : `; your server has ${bs.machineDiskGb} GiB disk`}\n${bs.tiers.map(t => `${t.name}: ${t.memGb} GB, ${t.vcpu} vCPU${t.diskGb == null ? '' : `, ${t.diskGb} GiB disk`}, ${price(t)} — ${t.blurb}`).join('\n')}\nPreview: weeny-cloud tier NAME --preview`)

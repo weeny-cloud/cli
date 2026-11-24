@@ -10,6 +10,7 @@ function fixture({interactive=false,ask,tierPreview,tierResult,operation}={}) {
   const call = async (path, request = {}) => {
     calls.push({ path, ...request })
     if (path === '/api/machines') return { machines: [machine] }
+    if (path === '/api/machines/mine' && request.method === 'DELETE') return { status: 'deleting' }
     if (path.endsWith('/resume')) return { id: 'mine', status: 'resuming' }
     if (path === '/api/apps/a/widget') {
       if (request.method === 'PUT') policy = { ...policy, settings: request.body }
@@ -33,11 +34,12 @@ test('route edit submits the full list and waits for confirmed removal', async (
   const calls = [], lines = [], progress = []
   const route = {hostname:'shop.onweeny.com',id:'op',revision:3,requested:['web-b:3000'],
     serving:['web-b:3000'],draining:['web-a:3000'],safeToRestart:[],state:'draining'}
+  let submittedState = 'draining'
   const commands = accountCommands({
     call: async (path, settings) => {
       calls.push({path,...settings})
       if (path.endsWith('/operations/op')) return {...route,state:'complete',draining:[],safeToRestart:['web-a:3000']}
-      return settings?.method === 'PUT' ? route : {...route,revision:2}
+      return settings?.method === 'PUT' ? {...route, state:submittedState} : {...route,revision:2}
     },
     output: line => lines.push(line),progress:line=>progress.push(line),sleep:async()=>{},
   })
@@ -47,11 +49,16 @@ test('route edit submits the full list and waits for confirmed removal', async (
   assert.deepEqual(JSON.parse(lines[0]).safeToRestart,['web-a:3000'])
   assert.match(progress[0],/expose status op/)
   calls.length=0
-  await commands.expose(['shop.onweeny.com','--backend','web-b:3000','--no-wait','--json'])
+  const noWait = ['shop.onweeny.com','--backend','web-b:3000','--no-wait','--json']
+  assert.equal(await commands.expose(noWait), undefined)
   assert.equal(calls.length,2)
   assert.equal(JSON.parse(lines.at(-1)).state,'draining')
   await assert.rejects(commands.expose(['shop.onweeny.com','--guess']),/Unknown option/)
   assert.equal(calls.length,2)
+  submittedState = 'failed'
+  assert.equal(await commands.expose(noWait), 1)
+  assert.equal(JSON.parse(lines.at(-1)).state, 'failed')
+  assert.equal(calls.length, 4)
 })
 
 test('an ambiguous destination never picks a running server by position', () => {
@@ -59,9 +66,23 @@ test('an ambiguous destination never picks a running server by position', () => 
   assert.throws(()=>selectMachine([a,b]),/Pass --server.*web-a, web-b/)
   assert.equal(selectMachine([a,b],'web-a'),a)
   assert.equal(selectMachine([a,b],'id-b'),b)
+  assert.throws(() => selectMachine([a, {...b, name: a.id}], a.id), /Ambiguous server/)
   const failed={id:'failed',name:'old',status:'failed'}
   assert.equal(selectMachine([failed,b]),b)
   assert.equal(selectMachine([failed,b],'failed'),failed)
+})
+
+test('legacy --id requires an exact ID for server and widget commands', async () => {
+  const { calls, commands, lines } = fixture()
+  await assert.rejects(commands.server(['status', '--id', 'server']), /No such server/)
+  await assert.rejects(commands.server(['delete', '--id', 'server', '--confirm']), /No such server/)
+  await assert.rejects(commands.widget(['app', '--id', 'server', '--branding', 'off']), /No such server/)
+  assert.ok(calls.every(call => call.path === '/api/machines' && !call.method))
+
+  await commands.server(['status', '--server', 'server', '--json'])
+  assert.equal(JSON.parse(lines.at(-1)).machines[0].id, 'mine')
+  await commands.server(['delete', '--id', 'mine', '--confirm'])
+  assert.deepEqual(calls.at(-1), { path: '/api/machines/mine', method: 'DELETE' })
 })
 
 test('blank server selectors cannot turn an explicit action into a default selection', async()=>{

@@ -1,3 +1,11 @@
+export const accountValueOptions = {
+  expose: ['health-path', 'backend'],
+  server: ['id', 'server', 'quote'],
+  widget: ['id', 'position', 'branding'],
+  billing: ['id', 'reason'],
+  tier: ['monthly-usd', 'quote', 'server'],
+}
+
 export function parseOptions(argv, valued = [], boolean = [], repeated = []) {
   const options = {}, args = []
   for (let i = 0; i < argv.length; i++) {
@@ -19,11 +27,12 @@ export function parseOptions(argv, valued = [], boolean = [], repeated = []) {
   return { args, options }
 }
 
-export function selectMachine(all, server) {
+export function selectMachine(all, server, { idOnly = false } = {}) {
   if (server !== undefined) {
     if (!server.trim()) throw new Error('--server needs a name or ID')
-    const machine = all.find(m => m.id === server || m.name === server)
-    if (machine) return machine
+    const matches = all.filter(m => m.id === server || (!idOnly && m.name === server))
+    if (matches.length === 1) return matches[0]
+    if (matches.length > 1) throw new Error(`Ambiguous server: ${server}. Check weeny-cloud server status for server IDs and names.`)
     throw new Error(`No such server: ${server}`)
   }
   const current = all.filter(m => !['failed','deleted'].includes(m.status))
@@ -37,7 +46,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
   const parse = parseOptions
   const emit = (value, options, text) => output(options.json ? JSON.stringify(value) : text)
   const machines = async () => (await call('/api/machines')).machines
-  const select = async server => selectMachine(await machines(), server)
+  const select = (available, options) => selectMachine(available, options.id ?? options.server, { idOnly: options.id !== undefined })
   const waitForServer = async (id, expected) => {
     const until = Date.now() + 10 * 60_000
     for (;;) {
@@ -61,18 +70,19 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
     ...(route.error ? [route.error] : []),
   ].join('\n')
   const routeStatus = id => call(`/api/https-routes/operations/${encodeURIComponent(id)}`)
-  const completedRoute = route => ['complete','failed','superseded'].includes(route.state)
+  const failedRoute = route => ['failed', 'superseded'].includes(route.state)
+  const completedRoute = route => route.state === 'complete' || failedRoute(route)
   const readRoute = (route, options) => {
     emit(route, options, routeSummary(route))
     return route.state === 'complete' ? undefined : 1
   }
   return {
     async expose(argv) {
-      const { args, options } = parse(argv, ['health-path'], ['no-wait','clear'], ['backend'])
+      const { args, options } = parse(argv, accountValueOptions.expose, ['no-wait','clear'], ['backend'])
       if (args[0] === 'status' && args.length === 2 && !options.backend && !options.clear && !options['health-path'] && !options['no-wait']) {
         const route = await routeStatus(args[1])
         emit(route,options,routeSummary(route))
-        return ['failed','superseded'].includes(route.state) ? 1 : undefined
+        return failedRoute(route) ? 1 : undefined
       }
       if (args.length !== 1 || args[0] === 'status' || (options.clear && options.backend) ||
           (!options.backend && !options.clear && (options['health-path'] || options['no-wait'])))
@@ -84,8 +94,10 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
         revision: route.revision, backends: options.clear ? [] : options.backend, healthPath: options['health-path'],
       } })
       const statusCommand = `npx weeny-cloud expose status ${operation.id}`
-      if (options['no-wait'])
-        return emit(operation, options, `${operation.state}. Check with ${statusCommand}`)
+      if (options['no-wait']) {
+        emit(operation, options, `${operation.state}. Check with ${statusCommand}`)
+        return failedRoute(operation) ? 1 : undefined
+      }
       progress(`Operation ${operation.id}. Check with ${statusCommand}`)
       const until = Date.now() + 5 * 60_000
       let printed
@@ -99,20 +111,19 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       return readRoute(operation, options)
     },
     async server(argv) {
-      const { args, options } = parse(argv, ['id','server','quote'], ['confirm','wait'])
+      const { args, options } = parse(argv, accountValueOptions.server, ['confirm','wait'])
       const action = args[0] ?? 'status'
       if (!['status','suspend','resume','rebuild','delete','retire','cancel-renewal'].includes(action) || args.length > 1)
         throw new Error('See weeny-cloud server --help for server controls.')
       if (options.server && options.id) throw new Error('Pass either --server or --id.')
-      const server = options.server ?? options.id
       if (action === 'status') {
         const available = await machines()
-        const all = (server ? [selectMachine(available, server)] : available).map(publicMachine)
+        const all = (options.server || options.id ? [select(available, options)] : available).map(publicMachine)
         return emit({ machines: all }, options, all.map(m => `${m.id}  ${m.name}  ${m.status}  ${m.tier}${m.diskMb == null ? '' : `  ${m.diskMb / 1024} GiB disk`}${m.host ? `  host ${m.host}${m.sharedHost ? ' (shared)' : ''}` : ''}`).join('\n') || 'No server yet')
       }
       if (['retire','cancel-renewal'].includes(action)) {
         if (options.confirm && !options.quote) throw new Error('Pass the approved --quote from the preview with --confirm.')
-        const selector = options.confirm && server !== undefined ? server : (await select(server)).id
+        const selector = options.confirm && options.server !== undefined ? options.server : select(await machines(), options).id
         const endpoint = `/api/machines/${encodeURIComponent(selector)}/${action}`
         let approved = options.quote
         if (!options.confirm) {
@@ -133,7 +144,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       }
       if (action !== 'resume' && !options.confirm) throw new Error(
         `${action === 'delete' ? 'Delete destroys this server and all its data.' : action === 'rebuild' ? 'Rebuild restores the latest snapshot; changes since it can be lost.' : 'Suspend takes every app offline until resumed.'} Get the human’s approval, then repeat with --confirm.`)
-      const m = await select(server)
+      const m = select(await machines(), options)
       let result = { id: m.id, ...await call(`/api/machines/${m.id}${action === 'delete' ? '' : '/' + action}`, { method: action === 'delete' ? 'DELETE' : 'POST' }) }
       if (options.wait) {
         const expected = { suspend: 'suspended', resume: 'running', rebuild: 'running', delete: 'deleted' }[action]
@@ -142,10 +153,10 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       emit(result, options, `${m.name}: ${result.status}${options.wait ? '' : ' — check: weeny-cloud server status'}`)
     },
     async widget(argv) {
-      const { args, options } = parse(argv, ['id','position','branding'])
+      const { args, options } = parse(argv, accountValueOptions.widget)
       if (args.length !== 1) throw new Error('Usage: weeny-cloud widget APP [--position bottom] [--branding on|off] [--json]')
       if (options.branding !== undefined && !['on','off'].includes(options.branding)) throw new Error('--branding must be on or off')
-      const m = await select(options.id), app = m.apps?.find(a => a.name === args[0])
+      const m = select(await machines(), options), app = m.apps?.find(a => a.name === args[0])
       if (!app) throw new Error('No such app on this server')
       const path = `/api/apps/${app.id}/widget`
       let policy = await call(path)
@@ -158,7 +169,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       emit(policy, options, `${app.name}: position ${policy.settings.position}; built with weeny badge ${policy.settings.branding ? 'on' : 'off'}${policy.free ? ' (required on free)' : ' (optional on paid/trial)'}`)
     },
     async billing(argv) {
-      const { args, options } = parse(argv, ['id','reason'], ['confirm','direct-paid'])
+      const { args, options } = parse(argv, accountValueOptions.billing, ['confirm','direct-paid'])
       const action = args[0] ?? 'status'
       if (options.id && action!=='cancel-checkout') throw new Error('--id is only used with billing cancel-checkout')
       if (options.reason !== undefined && action !== 'end-trial') throw new Error('--reason is only used with billing end-trial')
@@ -220,7 +231,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       throw new Error('Usage: weeny-cloud billing [status|portal|end-trial [--confirm] [--reason TEXT]|cancel-checkout [--id PURCHASE_ID]|checkout TIER --confirm [--direct-paid]] [--json]')
     },
     async tier(argv) {
-      const { args, options } = parse(argv, ['monthly-usd', 'quote', 'server'], ['preview','confirm','force'])
+      const { args, options } = parse(argv, accountValueOptions.tier, ['preview','confirm','force'])
       const want = args[0]
       const nonempty = value => typeof value === 'string' && value.trim().length > 0
       if (want === 'status' && args.length === 2) {

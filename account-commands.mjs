@@ -168,10 +168,14 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
         else if (preview.immediateCents === 0) details.push('No immediate charge.')
         else if (preview.immediateCents > 0) details.push(`Due now: $${(preview.immediateCents / 100).toFixed(2)}.`)
         else if (preview.immediateCents < 0) details.push(`Prorated credit: $${(-preview.immediateCents / 100).toFixed(2)}.`)
+        const seconds = preview.downtimeSeconds ?? (preview.downtimeMinutes ?? 0) * 60
+        const minutes = seconds / 60
+        const downtime = seconds < 60 ? `${seconds} seconds` : `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`
+        const estimate = seconds > 0 ? ` Expect about ${downtime} of downtime.` : ''
         if (preview.available === false) details.push('No eligible host has room right now.')
-        else if (preview.action === 'move') details.push(`Your server will move to another host. Allow about ${preview.downtimeMinutes} minutes of downtime.`)
+        else if (preview.action === 'move') details.push('Your server will move to another host.' + estimate)
         else if (preview.action === 'billing') details.push('Your apps can stay online during the switch.')
-        else if (preview.action !== 'provision') details.push('Server reboots during resize.' + (preview.downtimeMinutes ? ` Allow about ${preview.downtimeMinutes} minutes.` : ''))
+        else if (preview.action !== 'provision') details.push('Server reboots during resize.' + estimate)
         if (preview.legacyAddressChanges) details.push('Older IP-based TCP/UDP endpoints will use a new IP address.')
         if (preview.warning) details.push(preview.warning)
         return details.join('\n')

@@ -96,6 +96,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       if (['retire','cancel-renewal'].includes(action)) {
         const m = await select(server)
         const endpoint = `/api/machines/${m.id}/${action}`
+        if (options.confirm && !options.quote) throw new Error('Pass the approved --quote from the preview with --confirm.')
         if (options.confirm && options.quote) {
           const result = await call(endpoint, { method: 'POST', body: { quote: options.quote } })
           return emit(result, options, result.summary)
@@ -242,7 +243,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
         if (preview.targetDiskMb != null) details.push(`Resulting disk: ${preview.targetDiskMb / 1024} GiB`)
         if (preview.effectiveAt) details.push(`Paid plan starts ${new Date(preview.effectiveAt).toISOString()}`)
         if (preview.requiresCheckout) details.push('Checkout is required and will show the amount due before you pay.')
-        else if (preview.immediateCents === 0) details.push('No immediate charge.')
+        if (preview.immediateCents === 0 && !preview.requiresCheckout) details.push('No immediate charge.')
         else if (preview.immediateCents > 0) details.push(`Due now: $${(preview.immediateCents / 100).toFixed(2)}.`)
         else if (preview.immediateCents < 0) details.push(`Prorated credit: $${(-preview.immediateCents / 100).toFixed(2)}.`)
         const seconds = preview.downtimeSeconds ?? (preview.downtimeMinutes ?? 0) * 60

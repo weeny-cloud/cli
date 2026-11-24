@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { accountCommands } from './account-commands.mjs'
+import { accountCommands, selectMachine } from './account-commands.mjs'
 
 function fixture({interactive=false,ask,tierPreview,tierResult,operation}={}) {
   const calls = [], lines = []
@@ -28,6 +28,38 @@ function fixture({interactive=false,ask,tierPreview,tierResult,operation}={}) {
     loadCreds: () => ({ token: 'fixture' }), clearCredentials: () => { cleared = true }, interactive, ask,
     output: line => lines.push(line) }) }
 }
+
+test('route edit submits the full list and waits for confirmed removal', async () => {
+  const calls = [], lines = [], progress = []
+  const route = {hostname:'shop.onweeny.com',id:'op',revision:3,requested:['web-b:3000'],
+    serving:['web-b:3000'],draining:['web-a:3000'],safeToRestart:[],state:'draining'}
+  const commands = accountCommands({
+    call: async (path, settings) => {
+      calls.push({path,...settings})
+      if (path.endsWith('/operations/op')) return {...route,state:'complete',draining:[],safeToRestart:['web-a:3000']}
+      return settings?.method === 'PUT' ? route : {...route,revision:2}
+    },
+    output: line => lines.push(line),progress:line=>progress.push(line),sleep:async()=>{},
+  })
+  await commands.expose(['shop.onweeny.com','--backend','web-b:3000','--backend','web-b:3001','--json'])
+  assert.deepEqual(calls[1].body,{revision:2,backends:['web-b:3000','web-b:3001'],healthPath:undefined})
+  assert.equal(calls.length,3)
+  assert.deepEqual(JSON.parse(lines[0]).safeToRestart,['web-a:3000'])
+  assert.match(progress[0],/expose status op/)
+  calls.length=0
+  await commands.expose(['shop.onweeny.com','--backend','web-b:3000','--no-wait','--json'])
+  assert.equal(calls.length,2)
+  assert.equal(JSON.parse(lines.at(-1)).state,'draining')
+  await assert.rejects(commands.expose(['shop.onweeny.com','--guess']),/Unknown option/)
+  assert.equal(calls.length,2)
+})
+
+test('an ambiguous destination never picks a running server by position', () => {
+  const a={id:'id-a',name:'web-a',status:'sleeping'}, b={id:'id-b',name:'web-b',status:'running'}
+  assert.throws(()=>selectMachine([a,b]),/Pass --server.*web-a, web-b/)
+  assert.equal(selectMachine([a,b],'web-a'),a)
+  assert.equal(selectMachine([a,b],'id-b'),b)
+})
 test('server status is structured and omits credentials; disruptive actions require explicit approval', async () => {
   const f = fixture()
   await f.commands.server(['status', '--json'])

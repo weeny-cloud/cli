@@ -225,4 +225,18 @@ the CLI executes. Changing this copy requires a server release only.
 This CLI update is required once to use those fields; older installations cannot
 learn a new response field automatically. Older servers without guidance get a
 neutral review link instead of guessed prices, trial terms or free-fallback promises.
-Local command help, validation and transport errors remain packaged in the CLI.
+Command help is available offline as `help COMMAND` or `COMMAND --help`.
+
+## Multiple servers and HTTPS routing
+
+`create --name web-b --tier teeny` returns a payment link and the price for the
+new server. On an account with multiple servers, pass `--server web-b` to
+`push`, `ssh`, or `tier`. Use `server status` to see names, IDs and placement.
+
+`expose HOST --backend web-a:3000 --backend web-b:3000 --health-path /readyz`
+sets the complete backend list for an existing HTTPS URL. The CLI waits until
+removed backends drain. Use `--no-wait --json` and `expose status ID --json` to
+track the operation separately.
+
+See the [two-server rollout](https://weeny.cloud/recipes/two-server-rollout)
+and [SQLite blue-green rollout](https://weeny.cloud/recipes/sqlite-blue-green).

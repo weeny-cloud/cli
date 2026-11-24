@@ -1,43 +1,116 @@
-// Account controls live here; app deployment still belongs to the on-server CLI.
-// Both use documented owner APIs, with explicit confirmation for disruptive actions.
-export function accountCommands({ call, loadCreds, clearCredentials, ask, interactive, fromEnv, output = console.log }) {
-  const parse = (argv, valued = [], boolean = []) => {
-    const options = {}, args = []
-    for (let i = 0; i < argv.length; i++) {
-      const word = argv[i]
-      if (!word.startsWith('--')) { args.push(word); continue }
-      const key = word.slice(2)
-      if (!['json',...boolean,...valued].includes(key)) throw new Error(`Unknown option --${key}`)
-      if (valued.includes(key)) {
-        if (!argv[i + 1] || argv[i + 1].startsWith('--')) throw new Error(`--${key} needs a value`)
-        options[key] = argv[++i]
-      } else options[key] = true
+export function parseOptions(argv, valued = [], boolean = [], repeated = []) {
+  const options = {}, args = []
+  for (let i = 0; i < argv.length; i++) {
+    const word = argv[i]
+    if (!word.startsWith('-')) { args.push(word); continue }
+    const key = word.slice(2)
+    if (!word.startsWith('--') || !['json', ...boolean, ...valued, ...repeated].includes(key))
+      throw new Error(`Unknown option ${word}`)
+    if (valued.includes(key) || repeated.includes(key)) {
+      if (argv[i + 1] === undefined || argv[i + 1].startsWith('--')) throw new Error(`--${key} needs a value`)
+      const value = argv[++i]
+      if (repeated.includes(key)) (options[key] ??= []).push(value)
+      else options[key] = value
+    } else {
+      options[key] = true
     }
-    return { args, options }
   }
+  return { args, options }
+}
+
+export function selectMachine(all, server) {
+  const m = server ? all.find(m => m.id === server || m.name === server) : all.length === 1 ? all[0] : null
+  if (m) return m
+  if (!all.length) throw new Error('No server yet. Run npx weeny-cloud create.')
+  if (server) throw new Error(`No such server: ${server}`)
+  throw new Error(`Pass --server with one of: ${all.map(m => m.name).join(', ')}`)
+}
+
+export function accountCommands({ call, loadCreds, clearCredentials, ask, interactive, fromEnv,
+  output = console.log, progress = console.error, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  const parse = parseOptions
   const emit = (value, options, text) => output(options.json ? JSON.stringify(value) : text)
   const machines = async () => (await call('/api/machines')).machines
-  const select = async id => {
-    const all = await machines()
-    const m = id ? all.find(m => m.id === id) : all.length === 1 ? all[0] : null
-    if (!m) throw new Error(id ? 'No such server' : 'Specify --id from: npx weeny-cloud server status --json')
-    return m
+  const select = async server => selectMachine(await machines(), server)
+  const publicMachine = ({ id, name, status, tier, diskMb, note, error, apps, health, alerts, host, sharedHost, billing }) => ({
+    id, name, status, tier, diskMb, note, error, apps, health, alerts, host, sharedHost, billing,
+  })
+  const routeSummary = route => [
+    `${route.hostname}: ${route.state}`,
+    `Requested: ${route.requested.join(', ') || 'none'}`,
+    `New traffic: ${route.serving === null ? 'unknown' : route.serving.join(', ') || 'none'}`,
+    `Draining: ${route.draining.join(', ') || 'none'}`,
+    ...(route.safeToRestart?.length ? [`Safe to restart for this URL: ${route.safeToRestart.join(', ')}`] : []),
+    ...(route.error ? [route.error] : []),
+  ].join('\n')
+  const routeStatus = id => call(`/api/https-routes/operations/${encodeURIComponent(id)}`)
+  const completedRoute = route => ['complete','failed','superseded'].includes(route.state)
+  const readRoute = (route, options) => {
+    emit(route, options, routeSummary(route))
+    return route.state === 'complete' ? undefined : 1
   }
-  const publicMachine = ({ id, name, status, tier, diskMb, note, error, apps, health, alerts }) => ({ id, name, status, tier, diskMb, note, error, apps, health, alerts })
   return {
+    async expose(argv) {
+      const { args, options } = parse(argv, ['health-path'], ['no-wait','clear'], ['backend'])
+      if (args[0] === 'status' && args.length === 2 && !options.backend && !options.clear && !options['health-path'] && !options['no-wait']) {
+        const route = await routeStatus(args[1])
+        emit(route,options,routeSummary(route))
+        return ['failed','superseded'].includes(route.state) ? 1 : undefined
+      }
+      if (args.length !== 1 || args[0] === 'status' || (options.clear && options.backend) ||
+          (!options.backend && !options.clear && (options['health-path'] || options['no-wait'])))
+        throw new Error('Usage: weeny-cloud expose HOST [--backend SERVER:PORT ...] [--health-path PATH] [--no-wait] [--json]')
+      const path = '/api/https-routes/' + encodeURIComponent(args[0])
+      const route = await call(path)
+      if (!options.backend && !options.clear) return emit(route, options, routeSummary(route))
+      let operation = await call(path, { method: 'PUT', body: {
+        revision: route.revision, backends: options.clear ? [] : options.backend, healthPath: options['health-path'],
+      } })
+      const statusCommand = `npx weeny-cloud expose status ${operation.id}`
+      if (options['no-wait'])
+        return emit(operation, options, `${operation.state}. Check with ${statusCommand}`)
+      progress(`Operation ${operation.id}. Check with ${statusCommand}`)
+      const until = Date.now() + 5 * 60_000
+      let printed
+      while (!completedRoute(operation) && Date.now() < until) {
+        const line = routeSummary(operation)
+        if (printed !== line) { progress(line); printed = line }
+        await sleep(1000)
+        operation = await routeStatus(operation.id)
+      }
+      if (!completedRoute(operation)) progress(`Still running. Continue with ${statusCommand}`)
+      return readRoute(operation, options)
+    },
     async server(argv) {
-      const { args, options } = parse(argv, ['id'], ['confirm','wait'])
+      const { args, options } = parse(argv, ['id','server','quote'], ['confirm','wait'])
       const action = args[0] ?? 'status'
-      if (!['status','suspend','resume','rebuild','delete'].includes(action) || args.length > 1)
-        throw new Error('Usage: weeny-cloud server status|suspend|resume|rebuild|delete [--id ID] [--confirm] [--wait] [--json]')
+      if (!['status','suspend','resume','rebuild','delete','retire','cancel-renewal'].includes(action) || args.length > 1)
+        throw new Error('See weeny-cloud server --help for server controls.')
+      if (options.server && options.id) throw new Error('Pass either --server or --id.')
+      const server = options.server ?? options.id
       if (action === 'status') {
-        const all = (await machines()).filter(m => !options.id || m.id === options.id).map(publicMachine)
-        if (options.id && !all.length) throw new Error('No such server')
-        return emit({ machines: all }, options, all.map(m => `${m.id}  ${m.name}  ${m.status}  ${m.tier}${m.diskMb == null ? '' : `  ${m.diskMb / 1024} GiB disk`}`).join('\n') || 'No server yet')
+        const available = await machines()
+        const all = (server ? [selectMachine(available, server)] : available).map(publicMachine)
+        return emit({ machines: all }, options, all.map(m => `${m.id}  ${m.name}  ${m.status}  ${m.tier}${m.diskMb == null ? '' : `  ${m.diskMb / 1024} GiB disk`}${m.host ? `  host ${m.host}${m.sharedHost ? ' (shared)' : ''}` : ''}`).join('\n') || 'No server yet')
+      }
+      if (['retire','cancel-renewal'].includes(action)) {
+        const m = await select(server)
+        const endpoint = `/api/machines/${m.id}/${action}`
+        if (options.confirm && options.quote) {
+          const result = await call(endpoint, { method: 'POST', body: { quote: options.quote } })
+          return emit(result, options, result.summary)
+        }
+        const quote = await call(endpoint)
+        if (!quote.id) return emit(quote, options, quote.summary)
+        const confirmed = interactive && !options.json &&
+          /^y(es)?$/i.test(await ask(`${quote.summary}\nConfirm? (yes/no): `))
+        if (!confirmed) return emit(quote, options, `${quote.summary}\nAfter approval: weeny-cloud server ${action} --server ${m.id} --quote ${quote.id} --confirm`)
+        const result = await call(endpoint, { method: 'POST', body: { quote: quote.id } })
+        return emit(result, options, result.summary)
       }
       if (action !== 'resume' && !options.confirm) throw new Error(
         `${action === 'delete' ? 'Delete destroys this server and all its data.' : action === 'rebuild' ? 'Rebuild restores the latest snapshot; changes since it can be lost.' : 'Suspend takes every app offline until resumed.'} Get the human’s approval, then repeat with --confirm.`)
-      const m = await select(options.id)
+      const m = await select(server)
       let result = { id: m.id, ...await call(`/api/machines/${m.id}${action === 'delete' ? '' : '/' + action}`, { method: action === 'delete' ? 'DELETE' : 'POST' }) }
       if (options.wait) {
         const expected = { suspend: 'suspended', resume: 'running', rebuild: 'running', delete: 'deleted' }[action]
@@ -133,7 +206,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       throw new Error('Usage: weeny-cloud billing [status|portal|end-trial [--confirm] [--reason TEXT]|cancel-checkout [--id PURCHASE_ID]|checkout TIER --confirm [--direct-paid]] [--json]')
     },
     async tier(argv) {
-      const { args, options } = parse(argv, ['monthly-usd', 'quote'], ['preview','confirm','force'])
+      const { args, options } = parse(argv, ['monthly-usd', 'quote', 'server'], ['preview','confirm','force'])
       const want = args[0]
       const nonempty = value => typeof value === 'string' && value.trim().length > 0
       if (want === 'status' && args.length === 2) {
@@ -143,14 +216,18 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
         return emit(change, options, `Plan change ${change.id}: ${change.status}${change.phase ? ' (' + change.phase + ')' : ''}${change.error ? '\n' + change.error : ''}`)
       }
       if (want === 'status' || args.length > 1) throw new Error('Usage: weeny-cloud tier [NAME] [--preview|--confirm --monthly-usd AMOUNT --quote QUOTE] [--force] [--json] or tier status ID [--json]')
-      const bs = await call('/api/billing/status')
+      const suffix = options.server ? `?server=${encodeURIComponent(options.server)}` : ''
+      const machine = options.server ? { server: options.server } : {}
+      const bs = await call('/api/billing/status' + suffix)
+      if (!options.server && bs.servers?.length > 1)
+        throw new Error(`Pass --server with one of: ${bs.servers.map(m => m.name).join(', ')}`)
       const monthly = t => bs.pendingPlanChange?.tier === t.name ? bs.pendingPlanChange.monthlyUsd : bs.founding ? t.foundingUsd : t.listUsd
       const price = t => `$${monthly(t)}/mo`
       if (!want) return emit(bs, options, `Your plan: ${bs.tier}${bs.machineDiskGb == null ? '' : `; your server has ${bs.machineDiskGb} GiB disk`}\n${bs.tiers.map(t => `${t.name}: ${t.memGb} GB, ${t.vcpu} vCPU${t.diskGb == null ? '' : `, ${t.diskGb} GiB disk`}, ${price(t)} — ${t.blurb}`).join('\n')}\nPreview: weeny-cloud tier NAME --preview`)
       const target = bs.tiers.find(t => t.name === want && t.name !== 'free')
       if (!target) throw new Error('Choose an available paid plan from tier status. Review cancellation terms in the billing portal.')
       const getPreview = async () => {
-        const preview = await call('/api/billing/tier', { method:'POST',body:{tier:want,preview:true} })
+        const preview = await call('/api/billing/tier', { method:'POST',body:{tier:want,preview:true,...machine} })
         if (preview?.preview !== true ||
             ((Object.hasOwn(preview, 'quote') || Object.hasOwn(preview, 'action')) &&
               !nonempty(preview.quote)))
@@ -182,7 +259,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       }
       if (options.preview) {
         const preview = await getPreview()
-        const next = preview.quote && (!preview.unchanged || pendingChange) ? `\nAfter approval: weeny-cloud tier ${want} --confirm --monthly-usd ${preview.monthlyUsd} --quote ${preview.quote}` : ''
+        const next = preview.quote && (!preview.unchanged || pendingChange) ? `\nAfter approval: weeny-cloud tier ${want}${options.server ? ' --server ' + options.server : ''} --confirm --monthly-usd ${preview.monthlyUsd} --quote ${preview.quote}` : ''
         return emit({ ...preview, plan: target, monthlyUsd: preview.monthlyUsd ?? monthly(target) }, options, summary(preview) + next)
       }
       const approved = options['monthly-usd'] === undefined ? undefined : Number(options['monthly-usd'])
@@ -207,7 +284,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
           if (!/^y(es)?$/i.test(yes)) return output('Nothing changed')
         }
       }
-      const result = await call('/api/billing/tier', { method: 'POST', body: { tier: want, monthlyUsd, ...(quote ? { quote } : {}), ...(options.force ? { force: true } : {}) } })
+      const result = await call('/api/billing/tier', { method: 'POST', body: { tier: want, monthlyUsd, ...machine, ...(quote ? { quote } : {}), ...(options.force ? { force: true } : {}) } })
       const hasCheckout = nonempty(result?.checkoutUrl)
       if (!hasCheckout && typeof result?.ok !== 'boolean')
         throw new Error('The plan change outcome is unknown. Check weeny-cloud billing status before retrying.')

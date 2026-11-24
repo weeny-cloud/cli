@@ -36,13 +36,13 @@ globalThis.fetch=async(url,opts)=>{
 
 test('a non-TTY agent gets the CLI notice on stderr once, without installing a guide', async t => {
   const f = fixture(t)
-  const first = await f.run(['help', 'create'])
+  const first = await f.run([])
   assert.equal(first.status, 0, first.stderr)
   assert.match(first.stderr, /Weeny CLI update available: \d+\.\d+\.\d+ → 9999\.0\.0/)
   assert.match(first.stderr, /npx weeny-cloud@latest <command> for subsequent commands/)
   assert.doesNotMatch(first.stdout, /update available/)
   assert.match(first.stdout, /npx weeny-cloud create/)
-  const second = await f.run(['help', 'create'])
+  const second = await f.run([])
   assert.equal(second.status, 0, second.stderr)
   assert.equal(second.stdout, first.stdout)
   assert.doesNotMatch(second.stderr, /update available/)
@@ -53,8 +53,8 @@ test('a non-TTY agent gets the CLI notice on stderr once, without installing a g
 test('CI and JSON output skip version requests and notices entirely', async t => {
   for (const kind of ['ci', 'json']) {
     const f = fixture(t)
-    const result = await f.run(['help', 'create', ...(kind === 'json' ? ['--json'] : [])], kind === 'ci' ? { CI: 'true' } : {})
-    assert.equal(result.status, 0, result.stderr)
+    const result = await f.run(kind === 'json' ? ['apps','--json'] : [], kind === 'ci' ? { CI: 'true' } : {})
+    assert.equal(result.status, kind === 'json' ? 1 : 0, result.stderr)
     assert.doesNotMatch(result.stderr, /update available/)
     assert.equal(existsSync(f.requests), false)
     assert.equal(existsSync(join(f.profile, 'skill-update.json')), false)
@@ -63,13 +63,24 @@ test('CI and JSON output skip version requests and notices entirely', async t =>
 
 test('a stalled version check times out and lets the command finish, with daily backoff', { timeout: 12000 }, async t => {
   const f = fixture(t, true), began = Date.now()
-  const result = await f.run(['help', 'create'])
+  const result = await f.run([])
   const elapsed = Date.now() - began
   assert.equal(result.status, 0, result.stderr)
   assert.ok(elapsed >= 2500 && elapsed < 6000, `three-second check took ${elapsed}ms`)
   assert.match(result.stdout, /npx weeny-cloud create/)
   assert.doesNotMatch(result.stderr, /update available|TimeoutError|AbortError/)
-  const retry = await f.run(['help', 'create'])
+  const retry = await f.run([])
   assert.equal(retry.status, 0, retry.stderr)
   assert.equal(readFileSync(f.requests, 'utf8').trim().split('\n').length, 1)
+})
+
+test('command help is offline in either form', async t => {
+  const f = fixture(t,true)
+  const topic = await f.run(['help','expose'])
+  const flag = await f.run(['expose','--help'])
+  assert.equal(topic.status,0)
+  assert.equal(flag.status,0)
+  assert.equal(topic.stdout,flag.stdout)
+  assert.match(flag.stdout,/entire\s+backend list/)
+  assert.equal(existsSync(f.requests),false)
 })

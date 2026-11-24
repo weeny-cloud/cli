@@ -85,9 +85,9 @@ npx weeny-cloud push ./myapp myapp --build "npm ci && npm run build" -- npm star
 You supply the app's own build and start commands — weeny runs them verbatim, it doesn't
 guess your stack (works the same for Python, Go, plain static files: just change the
 commands; omit `--build` if there's nothing to build). The push uploads your folder,
-builds it in a fresh release on the server, health-checks it, and only then switches it
-live. **A failed build or a crashing app leaves the previous version serving** — you're
-never half-deployed. After the first push the commands are remembered:
+builds it in a fresh release on the server, then stops the current app, switches releases,
+and starts and checks the new process. Failed startup restores the previous release.
+After the first push the commands are remembered:
 `npx weeny-cloud push ./myapp` re-deploys with the same build/start. (The app name is
 inferred from the folder name — keep passing it explicitly whenever they differ.)
 
@@ -135,6 +135,9 @@ Give the user the URL. Done.
 - `weeny rollback myapp` — **go back.** Restores an earlier release: its code AND its
   start command. Data, database schema and env vars stay as they are.
 - `weeny start` / `weeny stop` — run or stop the current version.
+
+With more than one server, pass its name or ID using `--server`. Run
+`npx weeny-cloud expose --help` to manage a published URL across servers or ports.
 
 `weeny inspect myapp` shows exactly what's live (release, commit, commands, port, data
 path). `weeny releases myapp` lists what you can roll back to; `weeny deployments myapp`

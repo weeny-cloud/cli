@@ -271,14 +271,21 @@ test('billing cancellation rejects malformed selectors and arguments before maki
 
 test('previews host downtime, binds the approved quote, and reads the operation by ID',async()=>{
  const f=fixture({tierPreview:{preview:true,action:'move',monthlyUsd:3,immediateCents:0,
-   downtimeMinutes:5,legacyAddressChanges:true,quote:'signed-quote'}})
+   downtimeSeconds:120,downtimeMinutes:2,legacyAddressChanges:true,quote:'signed-quote'}})
  await f.commands.tier(['teeny','--preview'])
- assert.match(f.lines.pop(),/move to another host[\s\S]*new IP address[\s\S]*--quote signed-quote/)
+ assert.match(f.lines.pop(),/move to another host[\s\S]*2 minutes of downtime[\s\S]*new IP address[\s\S]*--quote signed-quote/)
  await f.commands.tier(['teeny','--confirm','--monthly-usd','3','--quote','signed-quote'])
  assert.deepEqual(f.calls.at(-1).body,{tier:'teeny',monthlyUsd:3,quote:'signed-quote'})
  assert.match(f.lines.pop(),/tier status op/)
  await f.commands.tier(['status','op','--json'])
  assert.equal(JSON.parse(f.lines.pop()).status,'delivered')
+})
+
+test('shows resize downtime in seconds when the preview supplies it', async () => {
+  const f = fixture({ tierPreview: { preview:true, action:'resize', monthlyUsd:3, immediateCents:0,
+    downtimeSeconds:20, downtimeMinutes:1, quote:'signed-quote' } })
+  await f.commands.tier(['teeny','--preview'])
+  assert.match(f.lines.pop(), /20 seconds of downtime/)
 })
 
 test('requires the approved quote on control versions that sign previews',async()=>{
@@ -312,7 +319,7 @@ test('checkout previews show where the amount due will be confirmed', async () =
   assert.match(f.lines.pop(),/Checkout is required and will show the amount due/)
   await f.commands.tier(['teeny'])
   assert.match(prompt,/Checkout is required and will show the amount due/)
-  assert.match(prompt,/move to another host/)
+  assert.match(prompt,/move to another host.*5 minutes of downtime/)
   assert.ok(f.calls.filter(c=>c.path==='/api/billing/tier').every(c=>c.body.preview))
 })
 

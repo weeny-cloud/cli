@@ -254,5 +254,4 @@ Supply the full desired backend list when changing traffic. Inspect it with
 `route inspect shop`, or run `route clear shop` to drain while retaining the URL.
 Use `route access shop --private --allow person@example.com` to share a private URL.
 
-`app create APP --server SERVER` can register an app for configuration before its
-first push. Use `push --user NAME` when your app should run as an existing Linux user.
+Use `push --user NAME` when your app should run as an existing Linux user.

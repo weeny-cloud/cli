@@ -245,7 +245,7 @@ and [SQLite blue-green rollout](https://weeny.cloud/recipes/sqlite-blue-green).
 
 ```sh
 npx weeny-cloud route create shop --private --health-path /readyz
-npx weeny-cloud push ./shop shop --server web-a --port 3000 --origin-route shop -- npm start
+npx weeny-cloud push ./shop shop --server web-a --port auto --origin-route shop -- npm start
 npx weeny-cloud route set-backends shop --backend web-a/shop
 ```
 

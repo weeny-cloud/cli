@@ -558,13 +558,22 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     if (!m?.sshHostname || !m?.tunnelSecret) { process.stderr.write(`weeny: no tunnel for machine ${id}\n`); process.exit(1) }
     const ws = new WebSocket(`wss://${m.sshHostname}`, { headers: { Authorization: m.tunnelSecret } })
     ws.binaryType = 'nodebuffer'
+    let resumeInputTimer
     const bail = (msg, code = 1) => { if (msg) process.stderr.write(`weeny: ${msg}\n`); try { ws.terminate() } catch {}; process.exit(code) }
     ws.on('unexpected-response', (_r, res) => bail(res.statusCode === 401 ? 'tunnel auth rejected' : `tunnel HTTP ${res.statusCode} — SSH session did not open; command did not run`))
     ws.on('error', (e) => bail(e.message))
     ws.on('open', () => {
       process.stdin.on('data', (chunk) => {
         ws.send(chunk, { binary: true })
-        if (ws.bufferedAmount > (1 << 20)) { process.stdin.pause(); const t = setInterval(() => { if (ws.bufferedAmount <= (1 << 18)) { clearInterval(t); process.stdin.resume() } }, 20) }
+        if (ws.bufferedAmount > (1 << 20)) {
+          process.stdin.pause()
+          resumeInputTimer = setInterval(() => {
+            if (ws.bufferedAmount <= (1 << 18)) {
+              clearInterval(resumeInputTimer)
+              process.stdin.resume()
+            }
+          }, 20)
+        }
       })
       process.stdin.on('end', () => { try { ws.close() } catch {} })
     })
@@ -572,7 +581,11 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
       const buf = Buffer.isBuffer(data) ? data : Buffer.from(data)
       if (!process.stdout.write(buf)) { ws._socket?.pause?.(); process.stdout.once('drain', () => ws._socket?.resume?.()) }
     })
-    ws.on('close', () => process.exit(0))
+    ws.on('close', () => {
+      clearInterval(resumeInputTimer)
+      process.stdin.pause()
+      // Let Node flush any SSH bytes already queued on stdout before exiting.
+    })
   },
 
   // Device keys: list, register this device, revoke another. Backed by the account —

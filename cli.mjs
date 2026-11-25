@@ -761,7 +761,8 @@ daily, with a three-second timeout. Offline checks do not fail the command.`,
 
 Object.assign(HELP, {
   app: `weeny-cloud app create APP [--server SERVER] [--json]\nRegister an app before its first deploy.`,
-  route: `weeny-cloud route create NAME [--private] [--health-path PATH] [--json]
+  route: `weeny-cloud route list [--json]
+weeny-cloud route create NAME [--private] [--health-path PATH] [--json]
 weeny-cloud route inspect NAME [--json]
 weeny-cloud route set-backends NAME --backend SERVER/APP [--backend SERVER/APP ...]
 weeny-cloud route clear NAME

@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-test('the SSH relay flushes queued output after the WebSocket closes', () => {
+async function runRelay({ keepInputOpen }) {
   const profile = mkdtempSync(join(tmpdir(), 'weeny-ssh-relay-'))
   try {
     const api = 'http://127.0.0.1:3123'
@@ -21,9 +22,16 @@ export class WebSocket extends EventEmitter {
     super()
     setImmediate(() => {
       this.emit('open')
-      this.emit('message', Buffer.from('ssh command output\\n'))
-      this.emit('close')
+      if (!${keepInputOpen}) this.finish()
     })
+  }
+  send() {
+    this.bufferedAmount = 2 * 1024 * 1024
+    setImmediate(() => this.finish())
+  }
+  finish() {
+    this.emit('message', Buffer.from('ssh command output\\n'))
+    this.emit('close')
   }
   close() {}
 }
@@ -56,13 +64,28 @@ process.stdout.write = chunk => {
     delete env.WEENY_SSH_KEY_FILE
     delete env.WEENY_KNOWN_HOSTS_FILE
     const cli = fileURLToPath(new URL('./cli.mjs', import.meta.url))
-    const result = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, cli, '_relay', 'fixture'], {
-      env, encoding: 'utf8', timeout: 10000,
+    const child = spawn(process.execPath, ['--import', pathToFileURL(preload).href, cli, '_relay', 'fixture'], {
+      env, stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000,
     })
-    assert.ifError(result.error)
-    assert.equal(result.status, 0, result.stderr)
-    assert.equal(result.stdout, 'ssh command output\n')
+    let stdout = '', stderr = ''
+    child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk })
+    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk })
+    child.stdin.on('error', error => { stderr += error.message })
+    if (keepInputOpen) child.stdin.write('outbound SSH data')
+    else child.stdin.end()
+    const [status, signal] = await once(child, 'close')
+    assert.equal(stdout, 'ssh command output\n')
+    assert.equal(signal, null, `Relay terminated by ${signal}\n${stderr}`)
+    assert.equal(status, 0, stderr)
   } finally {
     rmSync(profile, { recursive: true, force: true })
   }
+}
+
+test('the SSH relay flushes queued output after the WebSocket closes', async () => {
+  await runRelay({ keepInputOpen: false })
+})
+
+test('the SSH relay flushes output and exits with stdin still open under backpressure', async () => {
+  await runRelay({ keepInputOpen: true })
 })

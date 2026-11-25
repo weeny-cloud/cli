@@ -583,8 +583,9 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     })
     ws.on('close', () => {
       clearInterval(resumeInputTimer)
-      process.stdin.pause()
-      // Let Node flush any SSH bytes already queued on stdout before exiting.
+      // Close the input handle even if it was paused for backpressure.
+      // Leave stdout open so Node can flush queued SSH bytes before exiting.
+      process.stdin.destroy()
     })
   },
 

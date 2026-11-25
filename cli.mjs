@@ -538,16 +538,6 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     }
   },
 
-  async app() {
-    const { args, options } = parseOptions(argv, ['server'])
-    if (args.length !== 2 || args[0] !== 'create' || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(args[1]))
-      die('usage: weeny-cloud app create APP [--server SERVER] [--json]')
-    const { host } = await sshTarget(await runningMachine(options.server))
-    const command = ['weeny', 'app', 'create', args[1], ...(options.json ? ['--json'] : [])]
-    try { execFileSync('ssh', [...SSH_FLAGS, host, ...command], { stdio: 'inherit' }) }
-    catch (error) { process.exitCode = error.status || 1 }
-  },
-
   // Run a command on the server (or open a shell). Works for tunnel + direct machines alike.
   async ssh() {
     const rest = argv.slice(sshArgsStart)
@@ -760,7 +750,6 @@ daily, with a three-second timeout. Offline checks do not fail the command.`,
 }
 
 Object.assign(HELP, {
-  app: `weeny-cloud app create APP [--server SERVER] [--json]\nRegister an app before its first deploy.`,
   route: `weeny-cloud route list [--json]
 weeny-cloud route create NAME [--private] [--health-path PATH] [--json]
 weeny-cloud route inspect NAME [--json]

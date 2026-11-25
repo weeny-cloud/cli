@@ -76,6 +76,27 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
     emit(route, options, routeSummary(route))
     return route.state === 'complete' ? undefined : 1
   }
+  const setRoute = async (path, route, options, command) => {
+    let operation = await call(path, { method: 'PUT', body: {
+      revision: route.revision, backends: options.clear ? [] : options.backend, healthPath: options['health-path'],
+    } })
+    const statusCommand = `npx weeny-cloud ${command} status ${operation.id}`
+    if (options['no-wait']) {
+      emit(operation, options, `${operation.state}. Check with ${statusCommand}`)
+      return failedRoute(operation) ? 1 : undefined
+    }
+    progress(`Operation ${operation.id}. Check with ${statusCommand}`)
+    const until = Date.now() + 5 * 60_000
+    let printed
+    while (!completedRoute(operation) && Date.now() < until) {
+      const line = routeSummary(operation)
+      if (printed !== line) { progress(line); printed = line }
+      await sleep(1000)
+      operation = await routeStatus(operation.id)
+    }
+    if (!completedRoute(operation)) progress(`Still running. Continue with ${statusCommand}`)
+    return readRoute(operation, options)
+  }
   return {
     async expose(argv) {
       const { args, options } = parse(argv, accountValueOptions.expose, ['no-wait','clear'], ['backend'])
@@ -90,25 +111,49 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       const path = '/api/https-routes/' + encodeURIComponent(args[0])
       const route = await call(path)
       if (!options.backend && !options.clear) return emit(route, options, routeSummary(route))
-      let operation = await call(path, { method: 'PUT', body: {
-        revision: route.revision, backends: options.clear ? [] : options.backend, healthPath: options['health-path'],
-      } })
-      const statusCommand = `npx weeny-cloud expose status ${operation.id}`
-      if (options['no-wait']) {
-        emit(operation, options, `${operation.state}. Check with ${statusCommand}`)
-        return failedRoute(operation) ? 1 : undefined
+      return setRoute(path, route, options, 'expose')
+    },
+    async route(argv) {
+      const action = argv[0]
+      const { args, options } = parse(argv.slice(1), ['health-path'], ['private','public','no-wait'], ['backend','allow','domain'])
+      const name = args[0]
+      const invalid = () => { throw new Error('Usage: weeny-cloud route create|inspect|set-backends|clear|status|delete NAME. See weeny-cloud help route.') }
+      if (!name || args.length !== 1) invalid()
+      if (action === 'access' && !options.backend && !options['no-wait'] && !options['health-path'] &&
+          Boolean(options.private) !== Boolean(options.public) && (!options.public || !options.allow && !options.domain)) {
+        const result = await call('/api/https-routes/' + encodeURIComponent(name) + '/access', { method: 'PUT', body: {
+          mode: options.private ? 'private' : 'public', allow: options.allow, domains: options.domain,
+        } })
+        return emit(result,options,`${name}: ${result.mode}`)
       }
-      progress(`Operation ${operation.id}. Check with ${statusCommand}`)
-      const until = Date.now() + 5 * 60_000
-      let printed
-      while (!completedRoute(operation) && Date.now() < until) {
-        const line = routeSummary(operation)
-        if (printed !== line) { progress(line); printed = line }
-        await sleep(1000)
-        operation = await routeStatus(operation.id)
+      if (options.public || options.allow || options.domain) invalid()
+      if (action === 'create' && !options.backend && !options['no-wait']) {
+        const route = await call('/api/https-routes', { method: 'POST', body: {
+          name, private: options.private, healthPath: options['health-path'],
+        } })
+        return emit(route,options,`${route.url} · ${route.state}`)
       }
-      if (!completedRoute(operation)) progress(`Still running. Continue with ${statusCommand}`)
-      return readRoute(operation, options)
+      if (options.private) invalid()
+      const path = '/api/https-routes/' + encodeURIComponent(name)
+      if (action === 'set-backends' && options.backend || action === 'clear' && !options.backend) {
+        options.clear = action === 'clear'
+        return setRoute(path, await call(path), options, 'route')
+      }
+      if (options.backend || options['no-wait'] || options['health-path']) invalid()
+      if (action === 'inspect') {
+        const route = await call(path)
+        return emit(route,options,routeSummary(route))
+      }
+      if (action === 'status') {
+        const op = await routeStatus(name)
+        emit(op,options,routeSummary(op))
+        return failedRoute(op) ? 1 : undefined
+      }
+      if (action === 'delete') {
+        const route = await call(path,{ method: 'DELETE' })
+        return emit(route,options,`Deleted ${route.hostname}`)
+      }
+      invalid()
     },
     async server(argv) {
       const { args, options } = parse(argv, accountValueOptions.server, ['confirm','wait'])

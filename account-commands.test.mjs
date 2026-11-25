@@ -490,3 +490,27 @@ test('rejects missing or mismatched plan change status replies', async () => {
     assert.deepEqual(f.lines,[])
   }
 })
+
+test('named route commands reserve a URL and replace the entire backend list', async () => {
+  const calls = [], lines = []
+  const route = {
+    hostname: 'store-test.onweeny.com', url: 'https://store-test.onweeny.com',
+    revision: 0, state: 'reserved', requested: [], serving: [], draining: [],
+  }
+  const commands = accountCommands({
+    call: async (path, request) => {
+      calls.push({ path, ...request })
+      return request?.method === 'PUT' ? { ...route, state: 'complete', requested: request.body.backends } : route
+    },
+    output: line => lines.push(line), progress: () => {},
+  })
+  await commands.route(['create','store','--private','--health-path','/readyz','--json'])
+  assert.deepEqual(calls[0], { path: '/api/https-routes', method: 'POST',
+    body: { name: 'store', private: true, healthPath: '/readyz' } })
+  assert.equal(JSON.parse(lines[0]).url, route.url)
+  await commands.route(['set-backends','store','--backend','web-a/store','--backend','web-b/store'])
+  assert.deepEqual(calls.at(-1).body.backends, ['web-a/store','web-b/store'])
+  await commands.route(['clear','store'])
+  assert.deepEqual(calls.at(-1).body.backends, [])
+  await assert.rejects(commands.route(['clear','store','--backend','web-a/store']), /Usage/)
+})

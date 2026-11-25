@@ -37,7 +37,7 @@ const ALIASES = { status: 'server', whoami: 'help' }
 const VALUE_OPTIONS = {
   ...accountValueOptions,
   create: ['name', 'tier'],
-  push: ['build', 'health', 'stop', 'startup-timeout', 'tag', 'server'],
+  push: ['build', 'health', 'stop', 'startup-timeout', 'tag', 'server', 'port', 'origin-route', 'user'],
   login: ['email', 'code', 'label'],
   onboarding: ['project', 'discovery', 'discovery-detail'],
   keys: ['revoke'],
@@ -309,7 +309,7 @@ function commandList() {
   npx weeny-cloud token <host>     bearer token to call a private app from a terminal/agent
   npx weeny-cloud keys             this account's device keys (list, --revoke, --register)
   npx weeny-cloud server           status / resume / suspend / rebuild / delete
-  npx weeny-cloud expose HOST      inspect or set HTTPS backends for a published app
+  npx weeny-cloud route            reserve and manage HTTPS routes
   npx weeny-cloud widget <app>     badge and starting position (also on the server)
   npx weeny-cloud tier             plans / preview / confirmed plan change
   npx weeny-cloud billing          status / end-trial / cancel-checkout / human billing links
@@ -465,6 +465,10 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     } catch {
       die(`this server doesn't speak the push protocol — update it (ssh in and re-run the installer), or deploy on the server: weeny deploy ${app} --from <dir> -- <command>`)
     }
+    if ('user' in f && !begin.capabilities?.appUser)
+      die('this server needs an updated Weeny CLI before --user can be used')
+    if (('port' in f || 'origin-route' in f) && !begin.capabilities?.deploymentNetworking)
+      die('this server needs an updated Weeny CLI before --port or --origin-route can be used')
     if (('stop' in f || 'startup-timeout' in f) && !begin.capabilities?.lifecycleCommands)
       die('this server needs an updated Weeny CLI before --stop or --startup-timeout can be used; update the server CLI, then retry')
     if (!begin.defaults?.start?.length && !startArgv.length) {
@@ -521,6 +525,9 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     if ('health' in f) parts.push('--health', shq(f.health))
     if ('stop' in f) parts.push('--stop', shq(f.stop))
     if ('startup-timeout' in f) parts.push('--startup-timeout', shq(f['startup-timeout']))
+    for (const key of ['port', 'origin-route', 'user']) {
+      if (key in f) parts.push('--' + key, shq(f[key]))
+    }
     if ('tag' in f) parts.push('--tag', shq(f.tag))
     if (git) parts.push('--git-b64', Buffer.from(JSON.stringify(git)).toString('base64'))
     if (startArgv.length) parts.push('--', ...startArgv.map(shq))
@@ -529,6 +536,16 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
       if (e.status === 3) console.error(`  retry: npx weeny-cloud push ${pos[0] ?? '.'} ${app}${f.server ? ' --server ' + f.server : ''}`)
       process.exit(e.status ?? 1)
     }
+  },
+
+  async app() {
+    const { args, options } = parseOptions(argv, ['server'])
+    if (args.length !== 2 || args[0] !== 'create' || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(args[1]))
+      die('usage: weeny-cloud app create APP [--server SERVER] [--json]')
+    const { host } = await sshTarget(await runningMachine(options.server))
+    const command = ['weeny', 'app', 'create', args[1], ...(options.json ? ['--json'] : [])]
+    try { execFileSync('ssh', [...SSH_FLAGS, host, ...command], { stdio: 'inherit' }) }
+    catch (error) { process.exitCode = error.status || 1 }
   },
 
   // Run a command on the server (or open a shell). Works for tunnel + direct machines alike.
@@ -678,7 +695,7 @@ terms with bare npx weeny-cloud or at ${API}/dashboard/start.
 Bare create uses the first-server offers. A card-required trial needs review in
 the dashboard. List and pick servers with npx weeny-cloud server status.
 Use server status, resume, suspend, rebuild or delete; disruptive actions need --confirm.`,
-  push: `npx weeny-cloud push [folder] [app-name] [--server SERVER] [--build "<cmd>"] [--health "<cmd>"] [--stop "<cmd>"] [--startup-timeout <seconds>] [--tag "<text>"] [--all] [-- <start command>]
+  push: `npx weeny-cloud push [folder] [app-name] [--server SERVER] [--build "<cmd>"] [--health "<cmd>"] [--stop "<cmd>"] [--startup-timeout <seconds>] [--port PORT|auto] [--origin-route ROUTE] [--user NAME] [--tag "<text>"] [--all] [-- <start command>]
 
 Deploy a local folder to your server as a new release (name defaults to the folder's).
 First push needs the start command: end the line with \`-- <command>\`; a build step is
@@ -743,6 +760,18 @@ daily, with a three-second timeout. Offline checks do not fail the command.`,
 }
 
 Object.assign(HELP, {
+  app: `weeny-cloud app create APP [--server SERVER] [--json]\nRegister an app before its first deploy.`,
+  route: `weeny-cloud route create NAME [--private] [--health-path PATH] [--json]
+weeny-cloud route inspect NAME [--json]
+weeny-cloud route set-backends NAME --backend SERVER/APP [--backend SERVER/APP ...]
+weeny-cloud route clear NAME
+weeny-cloud route access NAME --public | --private [--allow EMAIL] [--domain DOMAIN]
+weeny-cloud route status OPERATION_ID [--json]
+weeny-cloud route delete NAME
+
+Create reserves a URL without a backend. Pass --origin-route NAME on push to
+configure the app before its build. Set the full backend list to send traffic.
+Clear drains the backends and keeps the hostname. Delete releases the hostname.`,
   expose: `weeny-cloud expose HOST [--backend SERVER:PORT ... | --clear] [--health-path PATH] [--no-wait] [--json]
 weeny-cloud expose status ID [--json]
 

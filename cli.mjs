@@ -465,6 +465,8 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     } catch {
       die(`this server doesn't speak the push protocol — update it (ssh in and re-run the installer), or deploy on the server: weeny deploy ${app} --from <dir> -- <command>`)
     }
+    if (f.port === 'auto' && !begin.capabilities?.autoPort)
+      die('this server needs an updated Weeny CLI before --port auto can be used')
     if ('user' in f && !begin.capabilities?.appUser)
       die('this server needs an updated Weeny CLI before --user can be used')
     if (('port' in f || 'origin-route' in f) && !begin.capabilities?.deploymentNetworking)

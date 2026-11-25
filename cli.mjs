@@ -14,7 +14,7 @@ import { installSkill, maybeCheckUpdates } from './skill-updates.mjs'
 import { resourceNoticesAllowed, maybeShowResourceNotices } from './resource-notices.mjs'
 import { profileAccessError, profileDirectory, writeProfile, checkProfileWritable } from './profile.mjs'
 import { proxyCommand } from './ssh-command.mjs'
-import { accountCommands } from './account-commands.mjs'
+import { accountCommands, accountValueOptions, parseOptions, selectMachine } from './account-commands.mjs'
 
 const SELF = fileURLToPath(import.meta.url)   // absolute path to this cli.mjs (for ProxyCommand)
 
@@ -33,9 +33,29 @@ const SSH_FLAGS = ['-F', SSH_CONFIG]
 const shellQuote = v => `'${String(v).replace(/'/g, `'\\''`)}'`
 const SSH_COMMAND = ['ssh', ...SSH_FLAGS].map(shellQuote).join(' ')
 const CREDS = join(DIR, 'credentials.json')
-if (!ENV.production && !process.argv.includes('--json')) console.error(`STAGING: ${API} — isolated account and SSH profile`)
+const ALIASES = { status: 'server', whoami: 'help' }
+const VALUE_OPTIONS = {
+  ...accountValueOptions,
+  create: ['name', 'tier'],
+  push: ['build', 'health', 'stop', 'startup-timeout', 'tag', 'server'],
+  login: ['email', 'code', 'label'],
+  onboarding: ['project', 'discovery', 'discovery-detail'],
+  keys: ['revoke'],
+}
+const cmd = process.argv[2]
+const command = Object.hasOwn(ALIASES, cmd) ? ALIASES[cmd] : cmd
+const argv = process.argv.slice(3)
+const delimiter = argv.indexOf('--')
+const optionsHead = argv.slice(0, delimiter === -1 ? argv.length : delimiter)
+const sshArgsStart = argv[0] === '--server' ? 2 : 0
+const valueFlags = Object.hasOwn(VALUE_OPTIONS, command) ? VALUE_OPTIONS[command].map(key => `--${key}`) : []
+const wantsHelp = ['help','--help','-h'].includes(cmd) || (cmd === 'ssh'
+  ? ['--help','-h'].includes(argv[sshArgsStart])
+  : optionsHead.some((arg, index) => arg === '--help' || (arg === '-h' && !valueFlags.includes(optionsHead[index - 1]))))
+const jsonOutput = cmd !== 'ssh' && optionsHead.includes('--json')
+if (!ENV.production && !jsonOutput && !wantsHelp) console.error(`STAGING: ${API} — isolated account and SSH profile`)
 
-const die = (msg, details = {}) => { console.error(process.argv.includes('--json') ? JSON.stringify({ error: { message: msg, ...details } }) : `✗ ${msg}`); process.exit(1) }
+const die = (msg, details = {}) => { console.error(jsonOutput ? JSON.stringify({ error: { message: msg, ...details } }) : `✗ ${msg}`); process.exit(1) }
 
 function loadCreds() {
   if (CI_CREDS) return CI_CREDS
@@ -49,7 +69,7 @@ function loadCreds() {
 }
 
 async function call(path, { method = 'GET', body, auth = true } = {}) {
-  const headers = { 'Content-Type': 'application/json' }
+  const headers = { 'Content-Type': 'application/json', 'X-Weeny-CLI-Features': 'multi-server-v1' }
   if (auth) {
     const creds = loadCreds()
     if (!creds?.token) die(`not signed in — run: npx weeny-cloud login`)
@@ -59,21 +79,21 @@ async function call(path, { method = 'GET', body, auth = true } = {}) {
     ...(ENV.production ? {} : { redirect: 'error' }) })
   const json = await res.json().catch(() => ({}))
   if (res.status === 401 && auth) die('session expired or revoked — run: npx weeny-cloud login')
-  if (res.status === 402 && !process.argv.includes('--json')) {
+  if (res.status === 402 && !jsonOutput) {
     console.error(`\n${json.statusMessage || json.message || 'Subscription required'}`)
     const url = json.data?.checkoutUrl
     if (url) console.error(`\nSort it out here:\n\n  ${url}\n\nThen run this command again.`)
     process.exit(1)
   }
   if (!res.ok) {
-    if (json.data?.code === 'builder_profile_required' && !process.argv.includes('--json')) onboardingNotice(json.data.onboarding)
-    if (!process.argv.includes('--json') && method === 'POST' && path === '/api/machines' && (json.data?.guidance !== undefined || json.data?.offers || json.data?.code === 'waitlisted'))
+    if (json.data?.code === 'builder_profile_required' && !jsonOutput) onboardingNotice(json.data.onboarding)
+    if (!jsonOutput && method === 'POST' && path === '/api/machines' && (json.data?.guidance !== undefined || json.data?.offers || json.data?.code === 'waitlisted'))
       serverChoices({ ...json.data, status: 'waitlisted' }, json.data?.position)
     const cancelCheckoutCommand=method==='POST' && path==='/api/machines' && json.data?.code==='exists' && json.data?.checkoutUrl
       ? 'npx weeny-cloud billing cancel-checkout' : undefined
-    if (cancelCheckoutCommand && !process.argv.includes('--json') && typeof json.data?.guidance !== 'string') console.error(`Cancel the unpaid checkout and keep your waitlist place: ${cancelCheckoutCommand}`)
+    if (cancelCheckoutCommand && !jsonOutput && typeof json.data?.guidance !== 'string') console.error(`Cancel the unpaid checkout and keep your waitlist place: ${cancelCheckoutCommand}`)
     const currentGuidance = typeof json.data?.guidance === 'string' && json.data.guidance.trim()
-    const errorMessage = currentGuidance && !process.argv.includes('--json')
+    const errorMessage = currentGuidance && !jsonOutput
       ? json.data.reason || `${method} ${path} → ${res.status}`
       : json.statusMessage || json.message || `${method} ${path} → ${res.status}`
     die(errorMessage, { status: res.status, data: json.data,
@@ -207,13 +227,15 @@ const sshTarget = async (m) => {
   return { host: `root@${alias}`, key, alias }
 }
 
-async function runningMachine() {
+async function runningMachine(server) {
   const { machines } = await call('/api/machines')
-  const m = machines.find(x => x.status === 'running')
-  if (m) return m
-  const waking = machines.find(x => ['sleeping', 'resuming'].includes(x.status))
-  if (!waking) die(machines.length ? `no running server (status: ${machines[0].status}) — check: npx weeny-cloud` : 'no server yet — run: npx weeny-cloud create')
-  console.error('→ waking your server…')
+  return wakeMachine(selectMachine(machines, server))
+}
+
+async function wakeMachine(waking) {
+  if (waking.status === 'running') return waking
+  if (!['sleeping', 'resuming'].includes(waking.status)) die(`${waking.name} (status: ${waking.status}) — check: npx weeny-cloud server status`)
+  if (!jsonOutput) console.error('→ waking your server…')
   if (waking.status === 'sleeping') await call(`/api/machines/${waking.id}/resume`, { method: 'POST' })
   for (let attempt = 0; attempt < 60; attempt++) {
     await new Promise(r => setTimeout(r, 5000))
@@ -267,12 +289,12 @@ async function orient() {
     if (m.status === 'running') {
       try { ensureSshConfig(m, key) } catch {}
       // tunnel machines (firecracker) have no routable IP — the way in is the CLI
-      sshCmd = !ENV.production || m.reachable === 'tunnel' ? 'npx weeny-cloud ssh' : `ssh root@${m.ip}`
+      sshCmd = !ENV.production || m.reachable === 'tunnel' ? 'npx weeny-cloud ssh' + (current.length > 1 ? ' --server ' + m.name : '') : `ssh root@${m.ip}`
     }
-    console.log(`server: ${m.status}  ${sshCmd}  ${m.error ? `(${m.error.slice(0, 60)})` : ''}`)
+    console.log(`${current.length > 1 ? m.name : 'server'}: ${m.status}  ${sshCmd}  ${m.error ? `(${m.error.slice(0, 60)})` : ''}`)
     machineNotice(m)
   }
-  console.log(`next: push code up (npx weeny-cloud push ./myapp) or go look around (npx weeny-cloud ssh)`)
+  console.log(current.length > 1 ? 'Pass --server NAME to push, ssh, or tier.' : 'next: push code up (npx weeny-cloud push ./myapp) or go look around (npx weeny-cloud ssh)')
   commandList()
 }
 
@@ -287,6 +309,7 @@ function commandList() {
   npx weeny-cloud token <host>     bearer token to call a private app from a terminal/agent
   npx weeny-cloud keys             this account's device keys (list, --revoke, --register)
   npx weeny-cloud server           status / resume / suspend / rebuild / delete
+  npx weeny-cloud expose HOST      inspect or set HTTPS backends for a published app
   npx weeny-cloud widget <app>     badge and starting position (also on the server)
   npx weeny-cloud tier             plans / preview / confirmed plan change
   npx weeny-cloud billing          status / end-trial / cancel-checkout / human billing links
@@ -335,25 +358,40 @@ const commands = {
   },
 
   async create() {
+    const { options, args } = parseOptions(argv, VALUE_OPTIONS.create, ['free'])
+    const named = options.name !== undefined || options.tier !== undefined
+    if (args.length || (named && (!options.name?.trim() || !options.tier?.trim() || options.free)))
+      die('Usage: weeny-cloud create [--name NAME --tier teeny|weeny|meany] [--json]')
     if (CI_CREDS) die('CI deployment credentials use an existing server; provision it from a signed-in local session first')
+    if (named) {
+      const result = await call('/api/machines/named', { method: 'POST', body: { name: options.name, tier: options.tier } })
+      if (jsonOutput) return console.log(JSON.stringify(result))
+      if (result.checkoutUrl) {
+        console.log(`${result.name}: $${result.monthlyUsd}/month. Due now: $${(result.immediateCents / 100).toFixed(2)}.\nPay: ${result.checkoutUrl}`)
+        return
+      }
+      console.log(`${result.name}: ${result.status}. Check with npx weeny-cloud server status.`)
+      return
+    }
     // Legacy --free is a harmless alias; selection now belongs to the server.
     let pub = findPublicKey()
     if (!pub) {
       profileDirectory(SSH_DIR)
-      if (!process.argv.includes('--json')) console.log(`no SSH key found — generating ${join(SSH_DIR, 'weeny_ed25519')}`)
+      if (!jsonOutput) console.log(`no SSH key found — generating ${join(SSH_DIR, 'weeny_ed25519')}`)
       execFileSync('ssh-keygen', ['-t', 'ed25519', '-N', '', '-C', 'weeny', '-f', join(SSH_DIR, 'weeny_ed25519')])
       pub = findPublicKey()
     }
-    if (!process.argv.includes('--json')) console.log(`using SSH key: ${pub.path}`)
+    if (!jsonOutput) console.log(`using SSH key: ${pub.path}`)
     const m = await call('/api/machines', { method: 'POST', body: { sshPublicKey: pub.key } })
     if (m.unsynced?.length) die(`Device key saved, but its server could not be reached: ${m.unsynced.join(', ')}. Retry create before connecting.`)
     if (m.waitingForCapacity) {
+      if (jsonOutput) return console.log(JSON.stringify(m))
       console.error(m.note || 'Your server request is queued. Check its current status on the server page.')
       serverChoices(m.serverAccess ?? m)
       return
     }
-    if (['sleeping', 'resuming'].includes(m.status)) await runningMachine()
-    console.log(['queued', 'provisioning'].includes(m.status)
+    if (['sleeping', 'resuming'].includes(m.status)) await wakeMachine(m)
+    if (!jsonOutput) console.log(['queued', 'provisioning'].includes(m.status)
       ? `→ setting up your server ${m.name} (takes ~2 minutes)…`
       : `→ using your existing server ${m.name}…`)
     let notePrinted = false
@@ -363,34 +401,40 @@ const commands = {
       const mine = machines.find(x => x.id === m.id)
       if (!mine) die('server vanished?')
       if (mine.status === 'failed') die(`setup failed: ${mine.error}`)
-      if (mine.note && !notePrinted) { notePrinted = true; console.log(`\n${mine.note}\n(you can ctrl-c — we'll email you, and bare \`npx weeny-cloud\` shows progress)`) }
+      if (!jsonOutput && mine.note && !notePrinted) { notePrinted = true; console.log(`\n${mine.note}\n(you can ctrl-c — we'll email you, and bare \`npx weeny-cloud\` shows progress)`) }
       if (mine.status === 'running') {
-        machineNotice(mine)
         const keyPath = pub.path.replace(/\.pub$/, '')
         ensureSshConfig(mine, keyPath)   // writes the direct or tunnel ssh-config block
         const creds = loadCreds()
         if (creds) writeProfile(CREDS, JSON.stringify({ ...creds, keyPath }, null, 2))
+        if (jsonOutput) {
+          const { id, name, status, tier, diskMb, memMb } = mine
+          return console.log(JSON.stringify({ id, name, status, tier, diskMb, memMb }))
+        }
+        machineNotice(mine)
+        const target = machines.some(other => other.id !== mine.id && !['failed', 'deleted'].includes(other.status))
+          ? ` --server ${mine.id}` : ''
         // Firecracker boxes have no public IP — the way in is `npx weeny-cloud ssh` (rides the
         // VM's own tunnel). Direct machines get the classic ssh line.
-        const wayIn = !ENV.production || mine.reachable === 'tunnel' ? `npx weeny-cloud ssh` : `ssh root@${mine.ip}`
+        const wayIn = !ENV.production || mine.reachable === 'tunnel' ? `npx weeny-cloud ssh${target}` : `ssh root@${mine.ip}`
         console.log(`
 ✓ your server is ready
 
   ${wayIn}
 
 To put an app on it:
-  1. build it locally, then deploy it:   npx weeny-cloud push ./myapp -- <start command>
-  2. put it on the internet:             npx weeny-cloud ssh "weeny expose myapp <port>"   → https://myapp-xxxx.onweeny.com
+  1. build it locally, then deploy it:   npx weeny-cloud push ./myapp${target} -- <start command>
+  2. put it on the internet:             npx weeny-cloud ssh${target} "weeny expose myapp <port>"   → https://myapp-xxxx.onweeny.com
 
-A push is a deployment: it uploads, builds (pass --build "<cmd>" if the app needs one),
-health-checks and goes live — or the previous release keeps serving.
+A push builds a new release, then stops, switches, starts and checks the app.
+A failed startup restores the previous release.
 
 Apps are operated ON the server with \`weeny\` — bare \`weeny\` there explains itself.
 Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud skill
 `)
         return
       }
-      process.stdout.write('.')
+      if (!jsonOutput) process.stdout.write('.')
     }
   },
 
@@ -398,32 +442,17 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
   // area, then the box builds, health-checks and activates it — or keeps the old release
   // serving. Push never mutates anything until the whole transaction succeeds.
   async push() {
-    // push needs its own parser: values with spaces (--build "npm ci && npm run build")
-    // and a `-- <start command>` tail are beyond the crude module-level flag scan.
-    const argvAll = process.argv.slice(3)
-    const dd = argvAll.indexOf('--')
-    const head = dd >= 0 ? argvAll.slice(0, dd) : argvAll
-    const startArgv = dd >= 0 ? argvAll.slice(dd + 1) : []
-    const f = {}, pos = []
-    const VALUED = new Set(['build', 'health', 'stop', 'startup-timeout', 'tag'])
-    for (let i = 0; i < head.length; i++) {
-      if (head[i].startsWith('--')) {
-        const k = head[i].slice(2)
-        if (VALUED.has(k)) {
-          const v = head[i + 1]
-          if (v === undefined || v.startsWith('--')) die(`--${k} needs a value in quotes`)
-          f[k] = v; i++
-        } else f[k] = true   // boolean flags: --all
-      } else pos.push(head[i])
-    }
-    if ('no-restart' in f) die(`--no-restart is gone: push now deploys atomically — there is no upload-without-deploy`)
+    const startArgv = delimiter >= 0 ? argv.slice(delimiter + 1) : []
+    const { options: f, args: pos } = parseOptions(optionsHead, VALUE_OPTIONS.push, ['all','no-restart'])
+    if ('no-restart' in f) die('--no-restart has been removed. push uploads and deploys the release.')
+    if (pos.length > 2) die('Usage: weeny-cloud push [folder] [app-name] [--server SERVER] [-- <start command>]')
 
     const dir = resolve(pos[0] ?? '.')
     const app = pos[1] ?? basename(dir).toLowerCase()
     try { if (!statSync(dir).isDirectory()) die(`not a directory: ${dir}`) } catch { die(`no such directory: ${dir}`) }
     if (!/^[a-z0-9][a-z0-9-]*$/.test(app) || app.length > 40) die(`app name '${app}' must be lowercase letters, digits, hyphens (max 40) — pass one: npx weeny-cloud push ${pos[0] ?? '.'} <name>`)
 
-    const m = await runningMachine()
+    const m = await runningMachine(f.server)
     const { host } = await sshTarget(m)   // writes/refreshes the ssh-config block (direct or tunnel)
 
     // Step 1: the box creates a unique empty staging dir for THIS push and tells us what
@@ -497,17 +526,20 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     if (startArgv.length) parts.push('--', ...startArgv.map(shq))
     try { execFileSync('ssh', [...SSH_FLAGS, host, (buildAdvice ? 'WEENY_BUILD_ADVICE_SHOWN=1 ' : '') + parts.join(' ')], { stdio: 'inherit' }) }
     catch (e) {
-      if (e.status === 3) console.error(`  retry: npx weeny-cloud push ${pos[0] ?? '.'} ${app}`)
+      if (e.status === 3) console.error(`  retry: npx weeny-cloud push ${pos[0] ?? '.'} ${app}${f.server ? ' --server ' + f.server : ''}`)
       process.exit(e.status ?? 1)
     }
   },
 
   // Run a command on the server (or open a shell). Works for tunnel + direct machines alike.
   async ssh() {
-    const m = await runningMachine()
+    const rest = argv.slice(sshArgsStart)
+    const server = sshArgsStart ? argv[1] : undefined
+    if (sshArgsStart && (!server?.trim() || server.startsWith('-'))) die('--server needs a name or ID')
+    const m = await runningMachine(server)
     const { host } = await sshTarget(m)
-    const rest = process.argv.slice(3)
-    try { execFileSync('ssh', [...SSH_FLAGS, ...(rest.length ? [] : ['-t']), host, ...rest], { stdio: 'inherit' }) }
+    const openShell = !rest.length || (rest.length === 1 && rest[0] === '--')
+    try { execFileSync('ssh', [...SSH_FLAGS, ...(openShell ? ['-t'] : []), host, ...rest], { stdio: 'inherit' }) }
     catch (e) {
       if (e.code === 'ENOENT') die('OpenSSH client not found. On Windows, install the OpenSSH Client optional feature, then reopen your terminal.')
       if (e.status === 255) console.error(`SSH exited 255 using configuration "${SSH_CONFIG}". See: npx weeny-cloud help ssh`)
@@ -607,9 +639,9 @@ Your Claude Code now knows how to deploy to weeny. Try: "deploy this app to ween
 
   async help() {
     const topic = positionals[0]
-    if (topic && HELP[topic]) return console.log(HELP[topic])
+    if (Object.hasOwn(HELP, topic)) return console.log(HELP[topic])
     if (topic) console.log(`no help for '${topic}' — the commands:`)
-    await orient().catch(() => commandList())
+    commandList()
   },
 }
 
@@ -630,7 +662,10 @@ Use a separate folder for staging. Keep the same override in subsequent terminal
 This does not move an existing account; sign in again in the new profile.
 Sign out and revoke this token: npx weeny-cloud logout
 Offline only: logout --local removes the local copy without revoking it.`,
-  create: `npx weeny-cloud create
+  create: `npx weeny-cloud create [--name NAME --tier teeny|weeny|meany] [--json]
+
+Pass --name and --tier to buy a named server. Open the checkout link to
+review and pay. Retry with the same name to find that purchase or server.
 
 New builder signup needs a brief profile first. Agents can complete it from existing
 project context: npx weeny-cloud onboarding --project "Project purpose and hosting need".
@@ -640,11 +675,10 @@ Provision your server (~2 min): a real Linux box — root, SSH, systemd. Uses yo
 key (generates ~/.ssh/weeny_ed25519 if you have none). The server selects the
 best eligible current offer, or saves a waitlist request. Check availability and
 terms with bare npx weeny-cloud or at ${API}/dashboard/start.
-Existing subscriptions keep their entitlement. A card-required offer needs human
-review in the dashboard; create never accepts billing terms or starts checkout.
-One server per account for now. Server controls: npx weeny-cloud help server
+Bare create uses the first-server offers. A card-required trial needs review in
+the dashboard. List and pick servers with npx weeny-cloud server status.
 Use server status, resume, suspend, rebuild or delete; disruptive actions need --confirm.`,
-  push: `npx weeny-cloud push [folder] [app-name] [--build "<cmd>"] [--health "<cmd>"] [--stop "<cmd>"] [--startup-timeout <seconds>] [--tag "<text>"] [--all] [-- <start command>]
+  push: `npx weeny-cloud push [folder] [app-name] [--server SERVER] [--build "<cmd>"] [--health "<cmd>"] [--stop "<cmd>"] [--startup-timeout <seconds>] [--tag "<text>"] [--all] [-- <start command>]
 
 Deploy a local folder to your server as a new release (name defaults to the folder's).
 First push needs the start command: end the line with \`-- <command>\`; a build step is
@@ -653,18 +687,21 @@ your call too (\`--build "npm ci && npm run build"\`). After that, bare
 passing the app name whenever it differs from the folder's (the name is inferred from
 the folder otherwise).
 
-Each push uploads into a fresh staging area (delta transfer against the live release),
-builds INSIDE the new release, health-checks it, and only then switches over — a failed
-build or a failing app leaves the previous release serving. Skips .git and node_modules;
+On a multi-server account, pass the destination name or ID with --server.
+Each push builds in a fresh release while the current app serves. It then stops the
+app, switches releases and starts the new process. A failed startup restores the
+previous release. Use separate ports and weeny-cloud expose for a live traffic handoff.
+The upload skips .git and node_modules;
 respects .gitignore (--all to override). Rollback: weeny rollback <app> on the server.
 --startup-timeout <seconds> sets the total server readiness deadline (default 30).
 --stop "<cmd>" adds synchronous cleanup for external workloads; keep it idempotent.
 Both settings are remembered per release. Use --stop none or --startup-timeout none
 to reset them. Requires an updated server CLI; start commands stay in the foreground.`,
-  ssh: `npx weeny-cloud ssh [command]
+  ssh: `npx weeny-cloud ssh [--server SERVER] [ssh-options] [--] [command]
 
 Open a shell on your server — or run one command and return. Uses the right key and IP
 so it always works. Your apps live in /apps, their data in /data.
+On a multi-server account, pass a name or ID with --server before the command.
 Sleeping free servers wake automatically for push or ssh; suspended servers do not.
 No SSH key on this device (new laptop, wiped machine)? No problem — as long as you're
 signed in, ssh generates and registers a fresh device key automatically.
@@ -706,7 +743,19 @@ daily, with a three-second timeout. Offline checks do not fail the command.`,
 }
 
 Object.assign(HELP, {
-  server: `weeny-cloud server status|resume|suspend|rebuild|delete [--id ID] [--confirm] [--wait] [--json]
+  expose: `weeny-cloud expose HOST [--backend SERVER:PORT ... | --clear] [--health-path PATH] [--no-wait] [--json]
+weeny-cloud expose status ID [--json]
+
+Inspect an HTTPS URL you own. To change where it sends traffic, give the entire
+backend list. From the developer machine or CI, use names from server status.
+Backends can use different ports on the same server. Health checks default to /.
+The command waits for removed backends to finish serving existing requests.
+Use --no-wait --json to start a change and expose status to poll the operation.
+Check safeToRestart before stopping a removed backend.
+
+On a server, use weeny expose APP PORT to publish a local app.`,
+  server: `weeny-cloud server status|resume|suspend|rebuild|delete|retire|cancel-renewal [--server SERVER] [--confirm] [--wait] [--json]
+For retire or cancel-renewal, preview first and pass the approved --quote with --confirm.
 
 Status does not wake a sleeping server. Resume wakes sleeping/suspended servers.
 Suspend takes all apps offline. Rebuild restores the latest snapshot, potentially
@@ -718,7 +767,7 @@ for completion for up to ten minutes. Inspect status before retrying an action.`
 Read or change appearance through the owner API, without waking the server.
 Positions: top-left, top, top-right, right, bottom-right, bottom, bottom-left, left.
 Free apps require the built with weeny badge; paid/trial apps can remove it.`,
-  tier: `weeny-cloud tier [NAME] [--preview|--confirm --monthly-usd AMOUNT --quote QUOTE] [--force] [--json]
+  tier: `weeny-cloud tier [NAME] [--server SERVER] [--preview|--confirm --monthly-usd AMOUNT --quote QUOTE] [--force] [--json]
 weeny-cloud tier status ID [--json]
 
 Preview billing and downtime, then pass --monthly-usd and --quote from the
@@ -749,34 +798,36 @@ SSH keys stay active. --local works offline but leaves the token valid on the se
 
 const account = accountCommands({ call, loadCreds, ask, interactive: !!process.stdin.isTTY, fromEnv: !!CI_CREDS,
   clearCredentials: () => rmSync(CREDS, { force: true }) })
-const cmd = process.argv[2]
-const onboardingHelpRequested = cmd === 'onboarding' && process.argv.slice(3).some(arg => arg === '--help' || arg === '-h')
 try {
 // Never put notices or optional work in CI, the explicit installer, or SSH's byte relay.
-if (!onboardingHelpRequested && !process.argv.includes('--json') && !process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) await maybeCheckUpdates(ENV, SELF)
+if (!wantsHelp && !jsonOutput && !process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) await maybeCheckUpdates(ENV, SELF)
 try {
-  if (!onboardingHelpRequested && resourceNoticesAllowed(process.argv.slice(2))) await maybeShowResourceNotices(ENV, loadCreds())
+  if (!wantsHelp && resourceNoticesAllowed(process.argv.slice(2))) await maybeShowResourceNotices(ENV, loadCreds())
 } catch {} // Credential loading is optional here too; the command handles its own errors.
 const SERVER_WORDS = new Set(['deploy', 'start', 'stop', 'restart', 'releases', 'rollback', 'deployments', 'inspect', 'expose', 'unexpose', 'remove', 'env', 'domain', 'allow', 'revoke', 'health'])
 const OLD_TO_NEW = { run: 'deploy', rm: 'remove', list: '', ls: '', access: 'allow', guide: 'help' }
 const LINUX_HINT = { logs: 'journalctl -u weeny-APP -f' }
-const ALIASES = { status: 'server', whoami: 'help' } // old names → orientation
-
-if (onboardingHelpRequested) console.log(onboardingHelp)
+if (wantsHelp) {
+  if (['help','--help','-h'].includes(command)) await commands.help()
+  else {
+    if (!Object.hasOwn(HELP, command)) die(`No help for ${cmd}. Run weeny-cloud help.`)
+    console.log(HELP[command])
+  }
+}
 else if (!cmd) await orient()
-else if (cmd === '--help' || cmd === '-h') await commands.help()
-else if (account[ALIASES[cmd] ?? cmd]) {
-  const outcome = await account[ALIASES[cmd] ?? cmd](process.argv.slice(3))
+else if (cmd === 'whoami') await orient().catch(() => commandList())
+else if (Object.hasOwn(account, command)) {
+  const outcome = await account[command](argv)
   if (outcome === 1) process.exitCode = 1
 }
-else if (commands[ALIASES[cmd] ?? cmd]) await commands[ALIASES[cmd] ?? cmd]()
-else if (SERVER_WORDS.has(cmd) || cmd in OLD_TO_NEW || cmd in LINUX_HINT) {
+else if (Object.hasOwn(commands, command)) await commands[command]()
+else if (SERVER_WORDS.has(cmd) || Object.hasOwn(OLD_TO_NEW, cmd) || Object.hasOwn(LINUX_HINT, cmd)) {
   const app = process.argv[3] && !process.argv[3].startsWith('-') ? process.argv[3] : '<app>'
-  if (cmd in LINUX_HINT) {
+  if (Object.hasOwn(LINUX_HINT, cmd)) {
     console.error(`${cmd} is bare Linux on your server — apps are systemd units named weeny-<app>:\n`)
     console.error(`  npx weeny-cloud ssh "${LINUX_HINT[cmd].replace('APP', app)}"\n`)
   } else {
-    const word = cmd in OLD_TO_NEW ? OLD_TO_NEW[cmd] : cmd
+    const word = Object.hasOwn(OLD_TO_NEW, cmd) ? OLD_TO_NEW[cmd] : cmd
     const line = ['weeny', word, ...process.argv.slice(3)].filter(Boolean).join(' ')
     console.error(`\`${['weeny', word].filter(Boolean).join(' ')}\` runs ON YOUR SERVER, not on your laptop. Go there:\n`)
     console.error(`  npx weeny-cloud ssh "${line}"\n`)

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { accountCommands } from './account-commands.mjs'
+import { accountCommands, selectMachine } from './account-commands.mjs'
 
 function fixture({interactive=false,ask,tierPreview,tierResult,operation}={}) {
   const calls = [], lines = []
@@ -10,6 +10,7 @@ function fixture({interactive=false,ask,tierPreview,tierResult,operation}={}) {
   const call = async (path, request = {}) => {
     calls.push({ path, ...request })
     if (path === '/api/machines') return { machines: [machine] }
+    if (path === '/api/machines/mine' && request.method === 'DELETE') return { status: 'deleting' }
     if (path.endsWith('/resume')) return { id: 'mine', status: 'resuming' }
     if (path === '/api/apps/a/widget') {
       if (request.method === 'PUT') policy = { ...policy, settings: request.body }
@@ -28,6 +29,147 @@ function fixture({interactive=false,ask,tierPreview,tierResult,operation}={}) {
     loadCreds: () => ({ token: 'fixture' }), clearCredentials: () => { cleared = true }, interactive, ask,
     output: line => lines.push(line) }) }
 }
+
+test('route edit submits the full list and waits for confirmed removal', async () => {
+  const calls = [], lines = [], progress = []
+  const route = {hostname:'shop.onweeny.com',id:'op',revision:3,requested:['web-b:3000'],
+    serving:['web-b:3000'],draining:['web-a:3000'],safeToRestart:[],state:'draining'}
+  let submittedState = 'draining'
+  const commands = accountCommands({
+    call: async (path, settings) => {
+      calls.push({path,...settings})
+      if (path.endsWith('/operations/op')) return {...route,state:'complete',draining:[],safeToRestart:['web-a:3000']}
+      return settings?.method === 'PUT' ? {...route, state:submittedState} : {...route,revision:2}
+    },
+    output: line => lines.push(line),progress:line=>progress.push(line),sleep:async()=>{},
+  })
+  await commands.expose(['shop.onweeny.com','--backend','web-b:3000','--backend','web-b:3001','--json'])
+  assert.deepEqual(calls[1].body,{revision:2,backends:['web-b:3000','web-b:3001'],healthPath:undefined})
+  assert.equal(calls.length,3)
+  assert.deepEqual(JSON.parse(lines[0]).safeToRestart,['web-a:3000'])
+  assert.match(progress[0],/expose status op/)
+  calls.length=0
+  const noWait = ['shop.onweeny.com','--backend','web-b:3000','--no-wait','--json']
+  assert.equal(await commands.expose(noWait), undefined)
+  assert.equal(calls.length,2)
+  assert.equal(JSON.parse(lines.at(-1)).state,'draining')
+  await assert.rejects(commands.expose(['shop.onweeny.com','--guess']),/Unknown option/)
+  assert.equal(calls.length,2)
+  submittedState = 'failed'
+  assert.equal(await commands.expose(noWait), 1)
+  assert.equal(JSON.parse(lines.at(-1)).state, 'failed')
+  assert.equal(calls.length, 4)
+})
+
+test('an ambiguous destination never picks a running server by position', () => {
+  const a={id:'id-a',name:'web-a',status:'sleeping'}, b={id:'id-b',name:'web-b',status:'running'}
+  assert.throws(()=>selectMachine([a,b]),/Pass --server.*web-a, web-b/)
+  assert.equal(selectMachine([a,b],'web-a'),a)
+  assert.equal(selectMachine([a,b],'id-b'),b)
+  assert.throws(() => selectMachine([a, {...b, name: a.id}], a.id), /Ambiguous server/)
+  const failed={id:'failed',name:'old',status:'failed'}
+  assert.equal(selectMachine([failed,b]),b)
+  assert.equal(selectMachine([failed,b],'failed'),failed)
+})
+
+test('legacy --id requires an exact ID for server and widget commands', async () => {
+  const { calls, commands, lines } = fixture()
+  await assert.rejects(commands.server(['status', '--id', 'server']), /No such server/)
+  await assert.rejects(commands.server(['delete', '--id', 'server', '--confirm']), /No such server/)
+  await assert.rejects(commands.widget(['app', '--id', 'server', '--branding', 'off']), /No such server/)
+  assert.ok(calls.every(call => call.path === '/api/machines' && !call.method))
+
+  await commands.server(['status', '--server', 'server', '--json'])
+  assert.equal(JSON.parse(lines.at(-1)).machines[0].id, 'mine')
+  await commands.server(['delete', '--id', 'mine', '--confirm'])
+  assert.deepEqual(calls.at(-1), { path: '/api/machines/mine', method: 'DELETE' })
+})
+
+test('blank server selectors cannot turn an explicit action into a default selection', async()=>{
+  const f=fixture()
+  for (const option of ['--id','--server'])
+    await assert.rejects(f.commands.server(['delete',option,'','--confirm']),/needs a name or ID/)
+  await assert.rejects(f.commands.tier(['teeny','--server',' ','--preview']),/needs a name or ID/)
+  assert.deepEqual(f.calls,[])
+})
+
+test('scoped plan changes fail on legacy Control and use the confirmed canonical server on current Control',async()=>{
+  const {billing}=fixture(), calls=[], lines=[]
+  let supported=false
+  const commands=accountCommands({
+    call:async(path,options)=>{
+      calls.push({path,...options})
+      if (path==='/api/machines/web-b/tier' && !options)
+        return supported ? {...billing,machineId:'second-id'} : billing
+      assert.equal(path,'/api/machines/second-id/tier')
+      if (!options) return {...billing,machineId:'second-id'}
+      return options.body.preview
+        ? {preview:true,quote:'scoped-quote',monthlyUsd:3,renewalResumesAt:'2026-12-01T00:00:00Z'}
+        : {ok:true,tier:'teeny'}
+    },
+    output:line=>lines.push(line),
+  })
+  const confirmation=['teeny','--server','web-b','--confirm','--monthly-usd','3','--quote','scoped-quote']
+  await assert.rejects(commands.tier(confirmation),/confirm the selected server/)
+  assert.equal(calls.length,1)
+  supported=true
+  await commands.tier(['teeny','--server','web-b','--preview'])
+  assert.match(lines.at(-1),/Renewal resumes on 2026-12-01/)
+  assert.match(lines.at(-1),/--server second-id/)
+  await commands.tier(confirmation)
+  assert.deepEqual(calls.at(-1),{path:'/api/machines/second-id/tier',method:'POST',
+    body:{tier:'teeny',monthlyUsd:3,quote:'scoped-quote'}})
+})
+
+test('an approved retirement can be retried by ID and --wait observes the deletion',async()=>{
+  const calls=[], lines=[]
+  const commands=accountCommands({
+    call:async(path,options)=>{
+      calls.push(path)
+      if (path==='/api/machines/mine/retire') {
+        assert.deepEqual(options,{method:'POST',body:{quote:'retire-receipt'}})
+        return {id:'retire-receipt',machineId:'mine',name:'web-b',summary:'Retirement queued.',status:'complete'}
+      }
+      assert.equal(path,'/api/machines')
+      return {machines:[]}
+    },
+    output:line=>lines.push(line),
+  })
+  await commands.server(['retire','--server','mine','--confirm','--quote','retire-receipt','--wait','--json'])
+  assert.deepEqual(calls,['/api/machines/mine/retire','/api/machines'])
+  assert.equal(JSON.parse(lines[0]).machineStatus,'deleted')
+})
+
+test('tier defaults to the one remaining consolidated server and verifies its ID before changing the plan', async () => {
+  const { billing } = fixture(), calls = [], lines = []
+  let machineId = 'remaining-id'
+  const { tier } = accountCommands({
+    call: async (path, options) => {
+      calls.push({ path, ...options })
+      if (path === '/api/billing/status') return { ...billing, tier: 'free', consolidated: true, servers: [
+        { id: 'retired-id', name: 'web-a', machineStatus: 'deleted' },
+        { id: 'remaining-id', name: 'web-b', machineStatus: 'running' },
+      ] }
+      assert.equal(path, '/api/machines/remaining-id/tier')
+      if (!options) return { ...billing, machineId }
+      return options.body.preview ? { preview: true, quote: 'approved', monthlyUsd: 3 } : { ok: true, tier: 'teeny' }
+    },
+    output: line => lines.push(line),
+  })
+  await tier(['--json'])
+  assert.equal(JSON.parse(lines.at(-1)).tier, billing.tier)
+  await tier(['teeny','--preview'])
+  assert.match(lines.at(-1), /weeny → teeny.*\n.*\nAfter approval:.*--server remaining-id/)
+
+  const confirm = ['teeny','--confirm','--monthly-usd','3','--quote','approved']
+  await tier(confirm)
+  assert.deepEqual(calls.at(-1), { path: '/api/machines/remaining-id/tier', method: 'POST',
+    body: { tier: 'teeny', monthlyUsd: 3, quote: 'approved' },
+  })
+  machineId = 'different-id'
+  await assert.rejects(tier(confirm), /confirm the selected server/)
+  assert.deepEqual(calls.at(-1), { path: '/api/machines/remaining-id/tier' })
+})
 test('server status is structured and omits credentials; disruptive actions require explicit approval', async () => {
   const f = fixture()
   await f.commands.server(['status', '--json'])

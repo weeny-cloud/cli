@@ -43,7 +43,7 @@ test('real CLI waits for the daily check, notices on the first invocation, and r
   const env = { ...process.env, WEENY_ENV: 'staging', WEENY_API: api, WEENY_CONFIG_DIR: profile }
   for (const key of ['CI', 'WEENY_TOKEN', 'WEENY_SSH_KEY_FILE', 'WEENY_KNOWN_HOSTS_FILE']) delete env[key]
   let exited = false
-  const running = run(env, ['help', 'skill']).then(result => { exited = true; return result })
+  const running = run(env, []).then(result => { exited = true; return result })
   await until(() => firstResponse)
   await pause(50)
   assert.equal(exited, false, 'command must wait for the daily check')
@@ -51,11 +51,11 @@ test('real CLI waits for the daily check, notices on the first invocation, and r
   const first = await running
   assert.equal(first.status, 0, first.stderr); assert.match(first.stderr, /guide update available/)
   assert.equal(existsSync(join(profile, 'skill-update.lock')), false)
-  const second = await run(env, ['help', 'skill'])
+  const second = await run(env, [])
   assert.equal(second.status, 0); assert.equal(second.stdout, first.stdout)
   assert.doesNotMatch(second.stderr, /guide update available/)
   assert.doesNotMatch(second.stdout, /guide update available/)
-  const third = await run(env, ['help', 'skill'])
+  const third = await run(env, [])
   assert.doesNotMatch(third.stderr, /guide update available/); assert.equal(requests, 1)
   const refresh = await run(env, ['skill'])
   assert.equal(refresh.status, 0, refresh.stderr)
@@ -90,11 +90,11 @@ test('a stalled response body times out and the command continues with daily bac
   mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, source)
   const env = { ...process.env, WEENY_ENV: 'staging', WEENY_API: api, WEENY_CONFIG_DIR: profile }
   for (const key of ['CI', 'WEENY_TOKEN', 'WEENY_SSH_KEY_FILE', 'WEENY_KNOWN_HOSTS_FILE']) delete env[key]
-  const start = Date.now(), result = await run(env, ['help', 'skill']), elapsed = Date.now() - start
+  const start = Date.now(), result = await run(env, []), elapsed = Date.now() - start
   assert.equal(result.status, 0, result.stderr)
   assert.ok(elapsed >= 2500 && elapsed < 6000, `expected the three-second deadline, got ${elapsed}ms`)
   assert.doesNotMatch(result.stderr, /TimeoutError|AbortError|guide update available/)
-  assert.match(result.stdout, /Install the weeny skill/)
+  assert.match(result.stdout, /weeny-cloud skill/)
   assert.equal(existsSync(join(profile, 'skill-update.lock')), false)
   const retry = await run(env, ['help', 'skill'])
   assert.equal(retry.status, 0); assert.equal(requests, 1)

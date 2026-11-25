@@ -253,3 +253,6 @@ The app listens on `PORT` and can use `WEENY_PUBLIC_URL` in its build and runtim
 Supply the full desired backend list when changing traffic. Inspect it with
 `route inspect shop`, or run `route clear shop` to drain while retaining the URL.
 Use `route access shop --private --allow person@example.com` to share a private URL.
+
+`app create APP --server SERVER` can register an app for configuration before its
+first push.

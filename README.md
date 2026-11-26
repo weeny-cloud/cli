@@ -240,3 +240,21 @@ track the operation separately.
 
 See the [two-server rollout](https://weeny.cloud/recipes/two-server-rollout)
 and [SQLite blue-green rollout](https://weeny.cloud/recipes/sqlite-blue-green).
+
+### Reserve an HTTPS URL before the first deployment
+
+```sh
+npx weeny-cloud route create shop --private --health-path /readyz
+npx weeny-cloud push ./shop shop --server web-a --port 3000 --origin-route shop -- npm start
+npx weeny-cloud route set-backends shop --backend web-a/shop
+```
+
+The app listens on `PORT` and can use `WEENY_PUBLIC_URL` in its build and runtime.
+Supply the full desired backend list when changing traffic. Inspect it with
+`route inspect shop`, or run `route clear shop` to drain while retaining the URL.
+Use the exact URL from `route list` to select a route unambiguously. A bare name
+selects a reserved route.
+
+`route access shop --private --allow person@example.com` replaces the entire
+private access list. Repeat `--allow` and `--domain` for every email and domain
+you want to keep. The owner always retains access.

@@ -118,7 +118,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       const { args, options } = parse(argv.slice(1), ['health-path'], ['private','public','no-wait'], ['backend','allow','domain'])
       if (action === 'list' && !args.length && !Object.keys(options).some(key => key !== 'json')) {
         const result = await call('/api/https-routes')
-        return emit(result,options,result.routes.map(route => `${route.name}  https://${route.hostname}`).join('\n') || 'No HTTPS routes')
+        return emit(result,options,result.routes.map(route => `https://${route.hostname}  (${route.name})`).join('\n') || 'No HTTPS routes')
       }
       const name = args[0]
       const invalid = () => { throw new Error('Usage: weeny-cloud route create|list|inspect|set-backends|clear|access|status|delete. See weeny-cloud help route.') }
@@ -126,7 +126,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       if (action === 'access' && !options.backend && !options['no-wait'] && !options['health-path'] &&
           Boolean(options.private) !== Boolean(options.public) && (!options.public || !options.allow && !options.domain)) {
         const result = await call('/api/https-routes/' + encodeURIComponent(name) + '/access', { method: 'PUT', body: {
-          mode: options.private ? 'private' : 'public', allow: options.allow, domains: options.domain,
+          mode: options.private ? 'private' : 'public', allow: options.allow ?? [], domains: options.domain ?? [],
         } })
         return emit(result,options,`${name}: ${result.mode}`)
       }

@@ -514,3 +514,28 @@ test('named route commands reserve a URL and replace the entire backend list', a
   assert.deepEqual(calls.at(-1).body.backends, [])
   await assert.rejects(commands.route(['clear','store','--backend','web-a/store']), /Usage/)
 })
+
+test('route list shows a unique URL selector for each route with the same name', async () => {
+  const urls = ['legacy.onweeny.com', 'reserved.onweeny.com']
+  const lines = []
+  const commands = accountCommands({
+    call: async () => ({ routes: urls.map(hostname => ({ name: 'store', hostname })) }),
+    output: line => lines.push(line),
+  })
+  await commands.route(['list'])
+  assert.equal(lines[0], urls.map(hostname => `https://${hostname}  (store)`).join('\n'))
+})
+
+test('route access sends a replacement of the full email and domain lists', async () => {
+  const bodies = []
+  const commands = accountCommands({
+    call: async (_path, { body }) => { bodies.push(body); return body },
+    output: () => {},
+  })
+  await commands.route(['access', 'store', '--private', '--allow', 'one@example.test', '--allow', 'two@example.test', '--domain', 'example.test'])
+  await commands.route(['access', 'store', '--private', '--allow', 'one@example.test'])
+  assert.deepEqual(bodies, [
+    { mode: 'private', allow: ['one@example.test', 'two@example.test'], domains: ['example.test'] },
+    { mode: 'private', allow: ['one@example.test'], domains: [] },
+  ])
+})

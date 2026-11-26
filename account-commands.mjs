@@ -123,9 +123,18 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       const name = args[0]
       const invalid = () => { throw new Error('Usage: weeny-cloud route create|list|inspect|set-backends|clear|access|status|delete. See weeny-cloud help route.') }
       if (!name || args.length !== 1) invalid()
+      const routePath = () => {
+        let selector = name
+        if (name.includes('://')) {
+          const url = new URL(name)
+          if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.port) invalid()
+          selector = url.hostname
+        }
+        return '/api/https-routes/' + encodeURIComponent(selector)
+      }
       if (action === 'access' && !options.backend && !options['no-wait'] && !options['health-path'] &&
           Boolean(options.private) !== Boolean(options.public) && (!options.public || !options.allow && !options.domain)) {
-        const result = await call('/api/https-routes/' + encodeURIComponent(name) + '/access', { method: 'PUT', body: {
+        const result = await call(routePath() + '/access', { method: 'PUT', body: {
           mode: options.private ? 'private' : 'public', allow: options.allow ?? [], domains: options.domain ?? [],
         } })
         return emit(result,options,`${name}: ${result.mode}`)
@@ -138,7 +147,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
         return emit(route,options,`${route.url} · ${route.state}`)
       }
       if (options.private) invalid()
-      const path = '/api/https-routes/' + encodeURIComponent(name)
+      const path = routePath()
       if (action === 'set-backends' && options.backend || action === 'clear' && !options.backend) {
         options.clear = action === 'clear'
         return setRoute(path, await call(path), options, 'route')

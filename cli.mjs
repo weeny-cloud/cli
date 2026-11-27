@@ -30,6 +30,8 @@ const SSH_DIR = ENV.sshDir
 // CI never inherits earlier Host/Match/Include rules from a user profile.
 const SSH_CONFIG = join(SSH_DIR, CI_CREDS ? 'ci-config' : 'config')
 const SSH_FLAGS = ['-F', SSH_CONFIG]
+const SSH_TROUBLESHOOTING = 'https://weeny.cloud/docs#ssh-and-push-troubleshooting'
+const OPENSSH_MISSING = 'OpenSSH client not found. On Windows, install the OpenSSH Client optional feature, then reopen your terminal.'
 const shellQuote = v => `'${String(v).replace(/'/g, `'\\''`)}'`
 const SSH_COMMAND = ['ssh', ...SSH_FLAGS].map(shellQuote).join(' ')
 const CREDS = join(DIR, 'credentials.json')
@@ -458,12 +460,21 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     // Step 1: the box creates a unique empty staging dir for THIS push and tells us what
     // it already knows (current release, remembered commands) — so a doomed first push
     // fails here, before a single byte is uploaded.
+    let out
+    try {
+      out = execFileSync('ssh', [...SSH_FLAGS, host, `weeny _deploy-begin ${app}`], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'] })
+    } catch (error) {
+      if (error.code === 'ENOENT') die(OPENSSH_MISSING)
+      if (error.status === 255) {
+        die(`SSH failed before push could upload any files. Check the SSH error above and try: npx weeny-cloud ssh --server ${m.id} true. Troubleshooting: ${SSH_TROUBLESHOOTING}`)
+      }
+      die('The server could not prepare this deployment. Check the SSH output above for the cause. If _deploy-begin is unavailable, update the server CLI or deploy on the server with weeny deploy.')
+    }
     let begin
     try {
-      const out = execFileSync('ssh', [...SSH_FLAGS, host, `weeny _deploy-begin ${app}`], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'] })
       begin = JSON.parse(out.trim().split('\n').pop())
     } catch {
-      die(`this server doesn't speak the push protocol — update it (ssh in and re-run the installer), or deploy on the server: weeny deploy ${app} --from <dir> -- <command>`)
+      die('The server returned an invalid response while preparing the deployment. Check that the server CLI is up to date or deploy on the server with weeny deploy.')
     }
     if (('port' in f || 'origin-route' in f) && !begin.capabilities?.deploymentNetworking)
       die('this server needs an updated Weeny CLI before --port or --origin-route can be used')
@@ -546,8 +557,8 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     const openShell = !rest.length || (rest.length === 1 && rest[0] === '--')
     try { execFileSync('ssh', [...SSH_FLAGS, ...(openShell ? ['-t'] : []), host, ...rest], { stdio: 'inherit' }) }
     catch (e) {
-      if (e.code === 'ENOENT') die('OpenSSH client not found. On Windows, install the OpenSSH Client optional feature, then reopen your terminal.')
-      if (e.status === 255) console.error(`SSH exited 255 using configuration "${SSH_CONFIG}". See: npx weeny-cloud help ssh`)
+      if (e.code === 'ENOENT') die(OPENSSH_MISSING)
+      if (e.status === 255) console.error(`SSH exited 255 using configuration "${SSH_CONFIG}". See npx weeny-cloud help ssh and ${SSH_TROUBLESHOOTING}`)
       process.exit(e.status ?? 1)
     }
   },
@@ -718,8 +729,8 @@ Both settings are remembered per release. Use --stop none or --startup-timeout n
 to reset them. Requires an updated server CLI; start commands stay in the foreground.`,
   ssh: `npx weeny-cloud ssh [--server SERVER] [ssh-options] [--] [command]
 
-Open a shell on your server — or run one command and return. Uses the right key and IP
-so it always works. Your apps live in /apps, their data in /data.
+Open a shell on your server or run one command and return. Uses the generated
+SSH configuration for your server. Your apps live in /apps, their data in /data.
 On a multi-server account, pass a name or ID with --server before the command.
 Sleeping free servers wake automatically for push or ssh; suspended servers do not.
 No SSH key on this device (new laptop, wiped machine)? No problem — as long as you're
@@ -730,7 +741,8 @@ An alias like weeny-<id> is a local SSH-config entry, not a public DNS hostname.
 If a plain ssh command cannot resolve it, use this CLI or pass -F with that config.
 On Windows, Get-Command ssh -All shows competing Windows/Git installations.
 Inspect the selected entry without connecting: ssh -G -F "${SSH_CONFIG}" <alias>
-Do not delete your keys or disable host checking to fix config discovery.`,
+Do not delete your keys or disable host checking to fix config discovery.
+For connection failures on restricted networks, see ${SSH_TROUBLESHOOTING}.`,
   apps: `npx weeny-cloud apps
 
 Every app you can reach: yours (with machine and URL) and the private apps other

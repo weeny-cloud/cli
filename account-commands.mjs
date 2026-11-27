@@ -1,7 +1,7 @@
 export const accountValueOptions = {
   expose: ['health-path', 'backend'],
   server: ['id', 'server', 'quote'],
-  widget: ['id', 'position', 'branding'],
+  widget: ['id', 'server', 'position', 'branding'],
   billing: ['id', 'reason'],
   tier: ['monthly-usd', 'quote', 'server'],
 }
@@ -118,15 +118,24 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
       const { args, options } = parse(argv.slice(1), ['health-path'], ['private','public','no-wait'], ['backend','allow','domain'])
       if (action === 'list' && !args.length && !Object.keys(options).some(key => key !== 'json')) {
         const result = await call('/api/https-routes')
-        return emit(result,options,result.routes.map(route => `${route.name}  https://${route.hostname}`).join('\n') || 'No HTTPS routes')
+        return emit(result,options,result.routes.map(route => `https://${route.hostname}  (${route.name})`).join('\n') || 'No HTTPS routes')
       }
       const name = args[0]
       const invalid = () => { throw new Error('Usage: weeny-cloud route create|list|inspect|set-backends|clear|access|status|delete. See weeny-cloud help route.') }
       if (!name || args.length !== 1) invalid()
+      const routePath = () => {
+        let selector = name
+        if (name.includes('://')) {
+          const url = new URL(name)
+          if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.port) invalid()
+          selector = url.hostname
+        }
+        return '/api/https-routes/' + encodeURIComponent(selector)
+      }
       if (action === 'access' && !options.backend && !options['no-wait'] && !options['health-path'] &&
           Boolean(options.private) !== Boolean(options.public) && (!options.public || !options.allow && !options.domain)) {
-        const result = await call('/api/https-routes/' + encodeURIComponent(name) + '/access', { method: 'PUT', body: {
-          mode: options.private ? 'private' : 'public', allow: options.allow, domains: options.domain,
+        const result = await call(routePath() + '/access', { method: 'PUT', body: {
+          mode: options.private ? 'private' : 'public', allow: options.allow ?? [], domains: options.domain ?? [],
         } })
         return emit(result,options,`${name}: ${result.mode}`)
       }
@@ -138,7 +147,7 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
         return emit(route,options,`${route.url} · ${route.state}`)
       }
       if (options.private) invalid()
-      const path = '/api/https-routes/' + encodeURIComponent(name)
+      const path = routePath()
       if (action === 'set-backends' && options.backend || action === 'clear' && !options.backend) {
         options.clear = action === 'clear'
         return setRoute(path, await call(path), options, 'route')
@@ -203,7 +212,8 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
     },
     async widget(argv) {
       const { args, options } = parse(argv, accountValueOptions.widget)
-      if (args.length !== 1) throw new Error('Usage: weeny-cloud widget APP [--position bottom] [--branding on|off] [--json]')
+      if (args.length !== 1) throw new Error('Usage: weeny-cloud widget APP [--server NAME_OR_ID] [--position bottom] [--branding on|off] [--json]')
+      if (options.server && options.id) throw new Error('Pass either --server or --id.')
       if (options.branding !== undefined && !['on','off'].includes(options.branding)) throw new Error('--branding must be on or off')
       const m = select(await machines(), options), app = m.apps?.find(a => a.name === args[0])
       if (!app) throw new Error('No such app on this server')

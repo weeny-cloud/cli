@@ -422,9 +422,12 @@ const commands = {
 
   ${wayIn}
 
-To put an app on it:
-  1. build it locally, then deploy it:   npx weeny-cloud push ./myapp${target} -- <start command>
-  2. put it on the internet:             npx weeny-cloud ssh${target} "weeny expose myapp <port>"   → https://myapp-xxxx.onweeny.com
+To put a web app on it:
+  1. reserve its URL:    npx weeny-cloud route create myapp --private
+  2. deploy it:         npx weeny-cloud push ./myapp${target} --port <port> -- <start command>
+  3. send it traffic:   npx weeny-cloud route set-backends myapp --backend ${m.name}/myapp
+
+Pass the app's configured port, or use --port auto if it reads PORT.
 
 A push builds a new release, then stops, switches, starts and checks the app.
 A failed startup restores the previous release.
@@ -535,7 +538,7 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     if (startArgv.length) parts.push('--', ...startArgv.map(shq))
     try { execFileSync('ssh', [...SSH_FLAGS, host, (buildAdvice ? 'WEENY_BUILD_ADVICE_SHOWN=1 ' : '') + parts.join(' ')], { stdio: 'inherit' }) }
     catch (e) {
-      if (e.status === 3) console.error(`  retry: npx weeny-cloud push ${pos[0] ?? '.'} ${app}${f.server ? ' --server ' + f.server : ''}`)
+      if (e.status === 3) console.error('  Rerun the same push command to keep its deployment options.')
       process.exit(e.status ?? 1)
     }
   },
@@ -567,13 +570,22 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     if (!m?.sshHostname || !m?.tunnelSecret) { process.stderr.write(`weeny: no tunnel for machine ${id}\n`); process.exit(1) }
     const ws = new WebSocket(`wss://${m.sshHostname}`, { headers: { Authorization: m.tunnelSecret } })
     ws.binaryType = 'nodebuffer'
+    let resumeInputTimer
     const bail = (msg, code = 1) => { if (msg) process.stderr.write(`weeny: ${msg}\n`); try { ws.terminate() } catch {}; process.exit(code) }
     ws.on('unexpected-response', (_r, res) => bail(res.statusCode === 401 ? 'tunnel auth rejected' : `tunnel HTTP ${res.statusCode} — SSH session did not open; command did not run`))
     ws.on('error', (e) => bail(e.message))
     ws.on('open', () => {
       process.stdin.on('data', (chunk) => {
         ws.send(chunk, { binary: true })
-        if (ws.bufferedAmount > (1 << 20)) { process.stdin.pause(); const t = setInterval(() => { if (ws.bufferedAmount <= (1 << 18)) { clearInterval(t); process.stdin.resume() } }, 20) }
+        if (ws.bufferedAmount > (1 << 20)) {
+          process.stdin.pause()
+          resumeInputTimer = setInterval(() => {
+            if (ws.bufferedAmount <= (1 << 18)) {
+              clearInterval(resumeInputTimer)
+              process.stdin.resume()
+            }
+          }, 20)
+        }
       })
       process.stdin.on('end', () => { try { ws.close() } catch {} })
     })
@@ -581,7 +593,12 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
       const buf = Buffer.isBuffer(data) ? data : Buffer.from(data)
       if (!process.stdout.write(buf)) { ws._socket?.pause?.(); process.stdout.once('drain', () => ws._socket?.resume?.()) }
     })
-    ws.on('close', () => process.exit(0))
+    ws.on('close', () => {
+      clearInterval(resumeInputTimer)
+      // Close the input handle even if it was paused for backpressure.
+      // Leave stdout open so Node can flush queued SSH bytes before exiting.
+      process.stdin.destroy()
+    })
   },
 
   // Device keys: list, register this device, revoke another. Backed by the account —
@@ -699,9 +716,14 @@ the folder otherwise).
 On a multi-server account, pass the destination name or ID with --server.
 Each push builds in a fresh release while the current app serves. It then stops the
 app, switches releases and starts the new process. A failed startup restores the
-previous release. Use separate ports and weeny-cloud expose for a live traffic handoff.
+previous release. Use route set-backends for a live traffic handoff.
 The upload skips .git and node_modules;
 respects .gitignore (--all to override). Rollback: weeny rollback <app> on the server.
+For an HTTPS backend, use --port NUMBER for the app's configured listener or
+--port auto if it reads PORT. Later pushes reuse the port. Attach with
+route set-backends after the app is healthy. Use --origin-route ROUTE if the
+app needs WEENY_PUBLIC_URL during build or startup.
+--user NAME runs the app and its lifecycle commands as an existing Linux user.
 --startup-timeout <seconds> sets the total server readiness deadline (default 30).
 --stop "<cmd>" adds synchronous cleanup for external workloads; keep it idempotent.
 Both settings are remembered per release. Use --stop none or --startup-timeout none
@@ -754,15 +776,20 @@ daily, with a three-second timeout. Offline checks do not fail the command.`,
 Object.assign(HELP, {
   route: `weeny-cloud route list [--json]
 weeny-cloud route create NAME [--private] [--health-path PATH] [--json]
-weeny-cloud route inspect NAME [--json]
-weeny-cloud route set-backends NAME --backend SERVER/APP [--backend SERVER/APP ...]
-weeny-cloud route clear NAME
-weeny-cloud route access NAME --public | --private [--allow EMAIL] [--domain DOMAIN]
+weeny-cloud route inspect ROUTE [--json]
+weeny-cloud route set-backends ROUTE --backend SERVER/APP [--backend SERVER/APP ...] [--health-path PATH] [--no-wait] [--json]
+weeny-cloud route clear ROUTE [--no-wait] [--json]
+weeny-cloud route access ROUTE --public | --private [--allow EMAIL] [--domain DOMAIN]
 weeny-cloud route status OPERATION_ID [--json]
-weeny-cloud route delete NAME
+weeny-cloud route delete ROUTE
 
-Create reserves a URL without a backend. Pass --origin-route NAME on push to
-configure the app before its build. Set the full backend list to send traffic.
+Create reserves a URL. Deploy each named backend with --port NUMBER or
+--port auto, then supply the full backend list to send traffic. Use
+SERVER:PORT to target an existing listener directly. With --no-wait, use
+route status to follow the operation until removed backends are safe to restart.
+Use the HTTPS URL from route list as ROUTE. A bare name selects a reserved route.
+Access replaces the full list of allowed emails and domains. Repeat --allow and
+--domain for every entry you want to keep. The owner always retains access.
 Clear drains the backends and keeps the hostname. Delete releases the hostname.`,
   expose: `weeny-cloud expose HOST [--backend SERVER:PORT ... | --clear] [--health-path PATH] [--no-wait] [--json]
 weeny-cloud expose status ID [--json]
@@ -783,7 +810,7 @@ Suspend takes all apps offline. Rebuild restores the latest snapshot, potentiall
 losing newer changes. Delete destroys all data. These disruptive actions require
 specific human approval and --confirm. Commands return immediately; --wait polls
 for completion for up to ten minutes. Inspect status before retrying an action.`,
-  widget: `weeny-cloud widget APP [--id SERVER_ID] [--position bottom] [--branding on|off] [--json]
+  widget: `weeny-cloud widget APP [--server NAME_OR_ID] [--position bottom] [--branding on|off] [--json]
 
 Read or change appearance through the owner API, without waking the server.
 Positions: top-left, top, top-right, right, bottom-right, bottom, bottom-left, left.

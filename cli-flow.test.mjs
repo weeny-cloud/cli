@@ -157,9 +157,16 @@ childProcess.execFileSync = (program, args) => {
   assert.equal(program, 'ssh')
   if (process.argv[2] === 'ssh') return console.log(JSON.stringify(args.slice(2)))
   assert.equal(process.argv[2], 'push')
-  if (args.at(-1) === 'weeny _deploy-begin demo') return JSON.stringify({
-    deploymentId:'fixture', incomingDir:'/tmp/incoming', capabilities:{ deploymentNetworking: ['supported','stale'].includes(deployment) },
-  })
+  if (args.at(-1) === 'weeny _deploy-begin demo') {
+    const failure = process.env.WEENY_TEST_PUSH_SETUP_FAILURE
+    if (failure === 'connection') throw Object.assign(new Error('connection closed'), { status: 255 })
+    if (failure === 'missing-client') throw Object.assign(new Error('spawnSync ssh ENOENT'), { code: 'ENOENT' })
+    if (failure === 'remote') throw Object.assign(new Error('remote command failed'), { status: 1 })
+    if (failure === 'invalid-response') return 'unexpected response'
+    return JSON.stringify({
+      deploymentId:'fixture', incomingDir:'/tmp/incoming', capabilities:{ deploymentNetworking: ['supported','stale'].includes(deployment) },
+    })
+  }
   const networking = deployment ? " --port '3000' --origin-route 'store'" : ''
   assert.equal(args.at(-1), "weeny _deploy-finalize demo --id fixture" + networking + " --tag '-h' -- 'npm' 'start'")
   if (deployment === 'stale') throw Object.assign(new Error('stale deployment base'), { status: 3 })
@@ -193,9 +200,21 @@ syncBuiltinESMExports()
       assert.equal(result.status, 0, result.stderr)
       assert.deepEqual(JSON.parse(result.stdout), ['root@weeny-staging-fixture', ...expected])
     }
-    const pushed = run(['push', '.', 'demo', '--tag', '-h', '--', 'npm', 'start'])
+    const push = ['push', '.', 'demo', '--tag', '-h', '--', 'npm', 'start']
+    const pushed = run(push)
     assert.equal(pushed.status, 0, pushed.stderr)
     assert.match(pushed.stdout, /deployment finalized/)
+    for (const [failure, message] of [
+      ['connection', /SSH failed before push could upload any files.*ssh --server fixture true.*#ssh-and-push-troubleshooting/],
+      ['missing-client', /OpenSSH client not found/],
+      ['remote', /The server could not prepare this deployment/],
+      ['invalid-response', /The server returned an invalid response/],
+    ]) {
+      const result = run(push, false, { WEENY_TEST_PUSH_SETUP_FAILURE: failure })
+      assert.equal(result.status, 1, result.stderr)
+      assert.match(result.stderr, message)
+      assert.equal(result.stdout, '')
+    }
     const networkPush = ['push', '.', 'demo', '--tag', '-h', '--port', '3000', '--origin-route', 'store', '--', 'npm', 'start']
     const ready = run(networkPush, false, { WEENY_TEST_NETWORKING: 'supported' })
     assert.equal(ready.status, 0, ready.stderr)

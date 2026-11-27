@@ -149,12 +149,22 @@ globalThis.fetch = async (url, opts) => {
 }
 childProcess.execFileSync = (program, args) => {
   if (program === 'git') throw new Error('no git metadata in this fixture')
-  if (program === 'rsync') return ''
+  const deployment = process.env.WEENY_TEST_NETWORKING
+  if (program === 'rsync') {
+    if (['unsupported', 'auto-unsupported'].includes(deployment)) process.exit(70)
+    return ''
+  }
   assert.equal(program, 'ssh')
   if (process.argv[2] === 'ssh') return console.log(JSON.stringify(args.slice(2)))
   assert.equal(process.argv[2], 'push')
-  if (args.at(-1) === 'weeny _deploy-begin demo') return JSON.stringify({deploymentId:'fixture',incomingDir:'/tmp/incoming'})
-  assert.match(args.at(-1), /^weeny _deploy-finalize demo --id fixture --tag '-h' -- 'npm' 'start'$/)
+  if (args.at(-1) === 'weeny _deploy-begin demo') return JSON.stringify({
+    deploymentId:'fixture', incomingDir:'/tmp/incoming', capabilities:{
+      deploymentNetworking: ['supported','stale','auto','auto-unsupported'].includes(deployment), autoPort: deployment === 'auto',
+    },
+  })
+  const networking = deployment ? " --port '" + (deployment === 'auto' ? 'auto' : '3000') + "' --origin-route 'store'" : ''
+  assert.equal(args.at(-1), "weeny _deploy-finalize demo --id fixture" + networking + " --tag '-h' -- 'npm' 'start'")
+  if (deployment === 'stale') throw Object.assign(new Error('stale deployment base'), { status: 3 })
   console.log('deployment finalized')
 }
 syncBuiltinESMExports()
@@ -162,8 +172,8 @@ syncBuiltinESMExports()
     const env = { ...process.env, CI: '1', WEENY_ENV: 'staging', WEENY_API: api, WEENY_CONFIG_DIR: profile }
     delete env.WEENY_TOKEN; delete env.WEENY_SSH_KEY_FILE; delete env.WEENY_KNOWN_HOSTS_FILE
     const command = ['--import', pathToFileURL(preload).href, fileURLToPath(new URL('./cli.mjs', import.meta.url))]
-    const run = (args, offline = false) => spawnSync(process.execPath, [...command, ...args], {
-      env: { ...env, WEENY_TEST_OFFLINE: offline ? '1' : '0' }, cwd: dir, encoding: 'utf8', timeout: 10000,
+    const run = (args, offline = false, extra = {}) => spawnSync(process.execPath, [...command, ...args], {
+      env: { ...env, WEENY_TEST_OFFLINE: offline ? '1' : '0', ...extra }, cwd: dir, encoding: 'utf8', timeout: 10000,
     })
 
     for (const [args, expected] of [
@@ -188,6 +198,23 @@ syncBuiltinESMExports()
     const pushed = run(['push', '.', 'demo', '--tag', '-h', '--', 'npm', 'start'])
     assert.equal(pushed.status, 0, pushed.stderr)
     assert.match(pushed.stdout, /deployment finalized/)
+    const networkPush = ['push', '.', 'demo', '--tag', '-h', '--port', '3000', '--origin-route', 'store', '--', 'npm', 'start']
+    const ready = run(networkPush, false, { WEENY_TEST_NETWORKING: 'supported' })
+    assert.equal(ready.status, 0, ready.stderr)
+    assert.match(ready.stdout, /deployment finalized/)
+    const unsupported = run(networkPush, false, { WEENY_TEST_NETWORKING: 'unsupported' })
+    assert.equal(unsupported.status, 1, unsupported.stderr)
+    assert.match(unsupported.stderr, /updated Weeny CLI before --port or --origin-route/)
+    const stale = run(networkPush, false, { WEENY_TEST_NETWORKING: 'stale' })
+    assert.equal(stale.status, 3, stale.stderr)
+    assert.match(stale.stderr, /Rerun the same push command to keep its deployment options/)
+    const autoPush = networkPush.map(arg => arg === '3000' ? 'auto' : arg)
+    const automatic = run(autoPush, false, { WEENY_TEST_NETWORKING: 'auto' })
+    assert.equal(automatic.status, 0, automatic.stderr)
+    assert.match(automatic.stdout, /deployment finalized/)
+    const unsupportedAuto = run(autoPush, false, { WEENY_TEST_NETWORKING: 'auto-unsupported' })
+    assert.equal(unsupportedAuto.status, 1, unsupportedAuto.stderr)
+    assert.match(unsupportedAuto.stderr, /updated Weeny CLI before --port auto can be used/)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 

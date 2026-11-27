@@ -533,7 +533,7 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     if (startArgv.length) parts.push('--', ...startArgv.map(shq))
     try { execFileSync('ssh', [...SSH_FLAGS, host, (buildAdvice ? 'WEENY_BUILD_ADVICE_SHOWN=1 ' : '') + parts.join(' ')], { stdio: 'inherit' }) }
     catch (e) {
-      if (e.status === 3) console.error(`  retry: npx weeny-cloud push ${pos[0] ?? '.'} ${app}${f.server ? ' --server ' + f.server : ''}`)
+      if (e.status === 3) console.error('  Rerun the same push command to keep its deployment options.')
       process.exit(e.status ?? 1)
     }
   },
@@ -565,13 +565,22 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     if (!m?.sshHostname || !m?.tunnelSecret) { process.stderr.write(`weeny: no tunnel for machine ${id}\n`); process.exit(1) }
     const ws = new WebSocket(`wss://${m.sshHostname}`, { headers: { Authorization: m.tunnelSecret } })
     ws.binaryType = 'nodebuffer'
+    let resumeInputTimer
     const bail = (msg, code = 1) => { if (msg) process.stderr.write(`weeny: ${msg}\n`); try { ws.terminate() } catch {}; process.exit(code) }
     ws.on('unexpected-response', (_r, res) => bail(res.statusCode === 401 ? 'tunnel auth rejected' : `tunnel HTTP ${res.statusCode} — SSH session did not open; command did not run`))
     ws.on('error', (e) => bail(e.message))
     ws.on('open', () => {
       process.stdin.on('data', (chunk) => {
         ws.send(chunk, { binary: true })
-        if (ws.bufferedAmount > (1 << 20)) { process.stdin.pause(); const t = setInterval(() => { if (ws.bufferedAmount <= (1 << 18)) { clearInterval(t); process.stdin.resume() } }, 20) }
+        if (ws.bufferedAmount > (1 << 20)) {
+          process.stdin.pause()
+          resumeInputTimer = setInterval(() => {
+            if (ws.bufferedAmount <= (1 << 18)) {
+              clearInterval(resumeInputTimer)
+              process.stdin.resume()
+            }
+          }, 20)
+        }
       })
       process.stdin.on('end', () => { try { ws.close() } catch {} })
     })
@@ -579,7 +588,12 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
       const buf = Buffer.isBuffer(data) ? data : Buffer.from(data)
       if (!process.stdout.write(buf)) { ws._socket?.pause?.(); process.stdout.once('drain', () => ws._socket?.resume?.()) }
     })
-    ws.on('close', () => process.exit(0))
+    ws.on('close', () => {
+      clearInterval(resumeInputTimer)
+      // Close the input handle even if it was paused for backpressure.
+      // Leave stdout open so Node can flush queued SSH bytes before exiting.
+      process.stdin.destroy()
+    })
   },
 
   // Device keys: list, register this device, revoke another. Backed by the account —
@@ -752,15 +766,18 @@ daily, with a three-second timeout. Offline checks do not fail the command.`,
 Object.assign(HELP, {
   route: `weeny-cloud route list [--json]
 weeny-cloud route create NAME [--private] [--health-path PATH] [--json]
-weeny-cloud route inspect NAME [--json]
-weeny-cloud route set-backends NAME --backend SERVER/APP [--backend SERVER/APP ...]
-weeny-cloud route clear NAME
-weeny-cloud route access NAME --public | --private [--allow EMAIL] [--domain DOMAIN]
+weeny-cloud route inspect ROUTE [--json]
+weeny-cloud route set-backends ROUTE --backend SERVER/APP [--backend SERVER/APP ...]
+weeny-cloud route clear ROUTE
+weeny-cloud route access ROUTE --public | --private [--allow EMAIL] [--domain DOMAIN]
 weeny-cloud route status OPERATION_ID [--json]
-weeny-cloud route delete NAME
+weeny-cloud route delete ROUTE
 
 Create reserves a URL without a backend. Pass --origin-route NAME on push to
 configure the app before its build. Set the full backend list to send traffic.
+Use the HTTPS URL from route list as ROUTE. A bare name selects a reserved route.
+Access replaces the full list of allowed emails and domains. Repeat --allow and
+--domain for every entry you want to keep. The owner always retains access.
 Clear drains the backends and keeps the hostname. Delete releases the hostname.`,
   expose: `weeny-cloud expose HOST [--backend SERVER:PORT ... | --clear] [--health-path PATH] [--no-wait] [--json]
 weeny-cloud expose status ID [--json]

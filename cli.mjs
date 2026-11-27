@@ -465,6 +465,8 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     } catch {
       die(`this server doesn't speak the push protocol — update it (ssh in and re-run the installer), or deploy on the server: weeny deploy ${app} --from <dir> -- <command>`)
     }
+    if (f.port === 'auto' && !begin.capabilities?.autoPort)
+      die('this server needs an updated Weeny CLI before --port auto can be used')
     if (('port' in f || 'origin-route' in f) && !begin.capabilities?.deploymentNetworking)
       die('this server needs an updated Weeny CLI before --port or --origin-route can be used')
     if (('stop' in f || 'startup-timeout' in f) && !begin.capabilities?.lifecycleCommands)
@@ -697,7 +699,7 @@ terms with bare npx weeny-cloud or at ${API}/dashboard/start.
 Bare create uses the first-server offers. A card-required trial needs review in
 the dashboard. List and pick servers with npx weeny-cloud server status.
 Use server status, resume, suspend, rebuild or delete; disruptive actions need --confirm.`,
-  push: `npx weeny-cloud push [folder] [app-name] [--server SERVER] [--build "<cmd>"] [--health "<cmd>"] [--stop "<cmd>"] [--startup-timeout <seconds>] [--port PORT] [--origin-route ROUTE] [--tag "<text>"] [--all] [-- <start command>]
+  push: `npx weeny-cloud push [folder] [app-name] [--server SERVER] [--build "<cmd>"] [--health "<cmd>"] [--stop "<cmd>"] [--startup-timeout <seconds>] [--port PORT|auto] [--origin-route ROUTE] [--tag "<text>"] [--all] [-- <start command>]
 
 Deploy a local folder to your server as a new release (name defaults to the folder's).
 First push needs the start command: end the line with \`-- <command>\`; a build step is

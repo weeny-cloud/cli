@@ -39,7 +39,7 @@
   ],
   "type": "module",
   "scripts": {
-    "test": "node --test *.test.mjs"
+    "test": "node --require ./test-fixtures/clear-proxy-env.cjs --test *.test.mjs"
   },
   "bin": {
     "weeny-cloud": "cli.mjs"
@@ -50,8 +50,10 @@
   "dependencies": {
     "https-proxy-agent": "^8.0.0",
     "proxy-from-env": "^2.1.0",
-    "undici": "^6.29.1",
     "ws": "^8.21.1"
+  },
+  "optionalDependencies": {
+    "undici": "^6.29.1"
   },
   "license": "UNLICENSED"
 }

@@ -10,6 +10,12 @@ function proxyFor(url) {
   const destination = new URL(url)
   // Use the same HTTPS proxy and exclusions for the API and the secure SSH relay.
   if (destination.protocol === 'wss:') destination.protocol = 'https:'
+  if (destination.protocol === 'https:' && !proxySetting('https:')) {
+    // Match Node's HTTP_PROXY fallback without changing the NO_PROXY port match.
+    const port = destination.port || '443'
+    destination.protocol = 'http:'
+    destination.port = port
+  }
   if (!proxySetting(destination.protocol)) return null
   const selected = getProxyForUrl(destination)
   if (!selected) return null
@@ -34,8 +40,14 @@ function proxyOptions(proxy) {
 
 let transport
 async function fetchTransport() {
-  const { Agent, ProxyAgent, fetch: request } = await import('undici')
   if (transport) return transport
+  let undici
+  try { undici = await import('undici') } catch (error) {
+    if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error
+    return null
+  }
+  if (transport) return transport
+  const { Agent, ProxyAgent, fetch: request } = undici
   // Resolve each origin separately, including origins reached by redirects.
   const direct = new Agent()
   const proxies = new Map()
@@ -62,9 +74,13 @@ export async function proxyFetch(url, options) {
     if (proxy) throw new Error('Using a proxy for Weeny API calls requires Node.js 18.17 or later.')
     return fetch(url, options)
   }
+  const fetchWithProxy = await fetchTransport()
+  if (!fetchWithProxy) {
+    if (!proxy) return fetch(url, options)
+    throw new Error('Proxying Weeny API calls requires the optional undici dependency. Reinstall weeny-cloud with optional dependencies.')
+  }
   try {
-    const { request, dispatcher } = await fetchTransport()
-    return await request(url, { ...options, dispatcher })
+    return await fetchWithProxy.request(url, { ...options, dispatcher: fetchWithProxy.dispatcher })
   } catch (error) {
     if (!proxy || options?.signal?.aborted) throw error
     const hostname = new URL(url).hostname

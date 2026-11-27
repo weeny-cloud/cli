@@ -118,8 +118,10 @@ Paths with spaces are supported; keep host checking enabled and preserve existin
 
 Run the usual `npx weeny-cloud ssh` and `npx weeny-cloud push` commands. The CLI
 uses your existing `HTTPS_PROXY` setting for its HTTPS API and secure WebSocket
-relay connections. Use `NO_PROXY` to list hosts that should connect directly.
-Lowercase variable names work too. Proxying API calls requires Node.js 18.17 or later.
+relay connections. The CLI uses `HTTP_PROXY` when `HTTPS_PROXY` is unset.
+Use `NO_PROXY` to list hosts that should connect directly. Lowercase variable names
+work too. Proxying API calls requires Node.js 18.17 or later and the optional
+dependencies installed by default with the CLI.
 
 Set the proxy URL in the terminal or CI environment that runs Weeny. For example,
 `HTTPS_PROXY=http://proxy.example.com:8080` works when your network uses an HTTP

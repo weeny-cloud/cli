@@ -117,10 +117,20 @@ test('CLI uses the configured proxy for Weeny API requests and SSH relay bytes',
   assert.equal(secureProxy.stdout, 'SSH fixture bytes')
   assert.deepEqual(requests, [apiTarget, relayTarget])
 
-  const excluded = await run({ https_proxy: proxyUrl, no_proxy: relayTarget })
-  assert.equal(excluded.status, 0, excluded.stderr)
-  assert.equal(excluded.stdout, 'SSH fixture bytes')
-  assert.deepEqual(requests, [apiTarget])
+  const fallback = await run({ HTTP_PROXY: proxyUrl, NODE_USE_ENV_PROXY: '1' })
+  assert.equal(fallback.status, 0, fallback.stderr)
+  assert.equal(fallback.stdout, 'SSH fixture bytes')
+  assert.deepEqual(requests, [apiTarget, relayTarget])
+
+  for (const proxyEnv of [
+    { https_proxy: proxyUrl, no_proxy: relayTarget },
+    { http_proxy: proxyUrl, no_proxy: relayTarget },
+  ]) {
+    const excluded = await run(proxyEnv)
+    assert.equal(excluded.status, 0, excluded.stderr)
+    assert.equal(excluded.stdout, 'SSH fixture bytes')
+    assert.deepEqual(requests, [apiTarget])
+  }
 
   rejectTarget = relayTarget
   const relayRejected = await run({ HTTPS_PROXY: proxyUrl })

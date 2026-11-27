@@ -14,6 +14,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - run: npm install --ignore-scripts --no-package-lock
       - run: npm test
       - run: node --check cli.mjs
       - run: npm pack --dry-run

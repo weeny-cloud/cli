@@ -14,6 +14,7 @@ import { installSkill, maybeCheckUpdates } from './skill-updates.mjs'
 import { resourceNoticesAllowed, maybeShowResourceNotices } from './resource-notices.mjs'
 import { profileAccessError, profileDirectory, writeProfile, checkProfileWritable } from './profile.mjs'
 import { proxyCommand } from './ssh-command.mjs'
+import { proxyFetch, webSocketProxyAgent } from './proxy-network.mjs'
 import { accountCommands, accountValueOptions, parseOptions, selectMachine } from './account-commands.mjs'
 
 const SELF = fileURLToPath(import.meta.url)   // absolute path to this cli.mjs (for ProxyCommand)
@@ -75,7 +76,7 @@ async function call(path, { method = 'GET', body, auth = true } = {}) {
     if (!creds?.token) die(`not signed in — run: npx weeny-cloud login`)
     headers.Authorization = `Bearer ${creds.token}`
   }
-  const res = await fetch(API + path, { method, headers, body: body ? JSON.stringify(body) : undefined,
+  const res = await proxyFetch(API + path, { method, headers, body: body ? JSON.stringify(body) : undefined,
     ...(ENV.production ? {} : { redirect: 'error' }) })
   const json = await res.json().catch(() => ({}))
   if (res.status === 401 && auth) die('session expired or revoked — run: npx weeny-cloud login')
@@ -568,11 +569,17 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     const { machines } = await call('/api/machines')
     const m = machines.find(x => x.id === id)
     if (!m?.sshHostname || !m?.tunnelSecret) { process.stderr.write(`weeny: no tunnel for machine ${id}\n`); process.exit(1) }
-    const ws = new WebSocket(`wss://${m.sshHostname}`, { headers: { Authorization: m.tunnelSecret } })
+    const url = `wss://${m.sshHostname}`
+    const agent = await webSocketProxyAgent(url)
+    const ws = new WebSocket(url, { agent, headers: { Authorization: m.tunnelSecret } })
     ws.binaryType = 'nodebuffer'
     let resumeInputTimer
     const bail = (msg, code = 1) => { if (msg) process.stderr.write(`weeny: ${msg}\n`); try { ws.terminate() } catch {}; process.exit(code) }
-    ws.on('unexpected-response', (_r, res) => bail(res.statusCode === 401 ? 'tunnel auth rejected' : `tunnel HTTP ${res.statusCode} — SSH session did not open; command did not run`))
+    ws.on('unexpected-response', (_r, res) => {
+      if (res.statusCode === 401) return bail('tunnel auth rejected')
+      if (agent && res.statusCode === 407) return bail('SSH proxy requires authentication (HTTP 407). Check HTTPS_PROXY.')
+      bail(`tunnel HTTP ${res.statusCode} — SSH session did not open; command did not run`)
+    })
     ws.on('error', (e) => bail(e.message))
     ws.on('open', () => {
       process.stdin.on('data', (chunk) => {
@@ -657,7 +664,7 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
 
   async skill() {
     let path
-    try { path = await installSkill(ENV, SELF) } catch (error) { die(error.message) }
+    try { path = await installSkill(ENV, SELF, { fetchImpl: proxyFetch }) } catch (error) { die(error.message) }
     if (!ENV.production) return console.log(`✓ staged skill → ${path}\nAsk your test agent to read this file. Your production agent skills were not changed.`)
     console.log(`✓ installed the weeny skill → ${path}
 Your Claude Code now knows how to deploy to weeny. Try: "deploy this app to weeny".`)
@@ -848,9 +855,9 @@ const account = accountCommands({ call, loadCreds, ask, interactive: !!process.s
   clearCredentials: () => rmSync(CREDS, { force: true }) })
 try {
 // Never put notices or optional work in CI, the explicit installer, or SSH's byte relay.
-if (!wantsHelp && !jsonOutput && !process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) await maybeCheckUpdates(ENV, SELF)
+if (!wantsHelp && !jsonOutput && !process.env.CI && !CI_CREDS && cmd !== 'skill' && !cmd?.startsWith('_')) await maybeCheckUpdates(ENV, SELF, { fetchImpl: proxyFetch })
 try {
-  if (!wantsHelp && resourceNoticesAllowed(process.argv.slice(2))) await maybeShowResourceNotices(ENV, loadCreds())
+  if (!wantsHelp && resourceNoticesAllowed(process.argv.slice(2))) await maybeShowResourceNotices(ENV, loadCreds(), { fetchImpl: proxyFetch })
 } catch {} // Credential loading is optional here too; the command handles its own errors.
 const SERVER_WORDS = new Set(['deploy', 'start', 'stop', 'restart', 'releases', 'rollback', 'deployments', 'inspect', 'expose', 'unexpose', 'remove', 'env', 'domain', 'allow', 'revoke', 'health'])
 const OLD_TO_NEW = { run: 'deploy', rm: 'remove', list: '', ls: '', access: 'allow', guide: 'help' }

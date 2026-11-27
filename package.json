@@ -1,7 +1,7 @@
 {
   "name": "weeny-cloud",
-  "version": "0.17.3",
-  "description": "weeny.cloud \u2014 a real Linux server for coding agents. Free forever, with HTTPS, private sharing and backups.",
+  "version": "0.17.4",
+  "description": "weeny.cloud — a real Linux server for coding agents. Free forever, with HTTPS, private sharing and backups.",
   "homepage": "https://weeny.cloud",
   "repository": {
     "type": "git",
@@ -30,6 +30,7 @@
     "environment.mjs",
     "profile.mjs",
     "ssh-command.mjs",
+    "proxy-network.mjs",
     "resource-notices.mjs",
     "skill-updates.mjs",
     "skill-lock.mjs",
@@ -47,6 +48,9 @@
     "node": ">=18"
   },
   "dependencies": {
+    "https-proxy-agent": "^8.0.0",
+    "proxy-from-env": "^2.1.0",
+    "undici": "^6.29.1",
     "ws": "^8.21.1"
   },
   "license": "UNLICENSED"

@@ -114,6 +114,18 @@ Use `npx weeny-cloud ssh`. If a separate `ssh` invocation fails to find the alia
 `npx weeny-cloud help ssh` for the exact config path and an `ssh -G -F` diagnostic.
 Paths with spaces are supported; keep host checking enabled and preserve existing keys.
 
+## Connecting through a forward proxy
+
+Run the usual `npx weeny-cloud ssh` and `npx weeny-cloud push` commands. The CLI
+uses your existing `HTTPS_PROXY` setting for its HTTPS API and secure WebSocket
+relay connections. Use `NO_PROXY` to list hosts that should connect directly.
+Lowercase variable names work too. Proxying API calls requires Node.js 18.17 or later.
+
+Set the proxy URL in the terminal or CI environment that runs Weeny. For example,
+`HTTPS_PROXY=http://proxy.example.com:8080` works when your network uses an HTTP
+forward proxy. The proxy must allow connections to Weeny and the WebSocket relay.
+A server reached by direct SSH uses OpenSSH's network configuration.
+
 ## Founder feedback
 
 Preview a short report with `npx weeny-cloud feedback --file feedback.md` (or pass

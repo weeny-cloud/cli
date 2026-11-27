@@ -102,9 +102,14 @@ deps), any frontend: `curl https://weeny.cloud/recipes/default.txt`. Framework a
 `curl https://weeny.cloud/recipes/nextjs.txt`. For larger builds on a 1GB server, build locally —
 `curl https://weeny.cloud/recipes/teeny.txt`.
 
-**3. Put it on the internet** (on the server — `npx weeny-cloud ssh` gets you there).
-Expose the app on its actual port. To help other agents use it, optionally add an
-`llms.txt` in the app root before pushing.
+With more than one server, pass its name or ID using `--server`.
+
+**3. Put it on the internet.** Reserve an HTTPS URL with `npx weeny-cloud route create`.
+On the first web deploy, pass `--port NUMBER` for the app's configured listener or
+`--port auto` if the app reads `PORT`. Once healthy, attach it with
+`npx weeny-cloud route set-backends ROUTE --backend SERVER/APP`. Pass the full
+backend list on each traffic change. See https://weeny.cloud/recipes/default.txt.
+To help other agents use the app, optionally add an `llms.txt` before pushing.
 Describe its purpose, endpoints and authentication. Skeleton:
 
 ```
@@ -119,14 +124,7 @@ ids are stable; list is newest-first.
 
 Weeny reads it at deploy time and serves it at `https://<url>/llms.txt` — don't add a
 route for it. It ships with each release (rollback restores the matching docs), so
-keep it current when changing the API. Then:
-
-```
-weeny env myapp KEY=value        # encrypted; works before first deploy; restarts an existing app
-weeny expose myapp 3000          # → https://myapp-xxxx.onweeny.com
-```
-
-Give the user the URL. Done.
+keep it current when changing the API. Give the user the HTTPS URL.
 
 **Four verbs, four intents** — picking the wrong one is the easiest mistake here:
 
@@ -135,9 +133,6 @@ Give the user the URL. Done.
 - `weeny rollback myapp` — **go back.** Restores an earlier release: its code AND its
   start command. Data, database schema and env vars stay as they are.
 - `weeny start` / `weeny stop` — run or stop the current version.
-
-With more than one server, pass its name or ID using `--server`. Run
-`npx weeny-cloud expose --help` to manage a published URL across servers or ports.
 
 `weeny inspect myapp` shows exactly what's live (release, commit, commands, port, data
 path). `weeny releases myapp` lists what you can roll back to; `weeny deployments myapp`
@@ -148,7 +143,9 @@ with app env, without restarting it. `weeny help exec` has details and console e
 
 ## Private links
 
-`weeny expose myapp 3000 --private` — viewers must log in to weeny. Let people in:
+Reserve a private route with `npx weeny-cloud route create myapp --private`. Set
+the complete access list with `npx weeny-cloud route access myapp --private --allow amy@acme.com`.
+For an existing app exposure, use the server commands:
 `weeny allow myapp amy@acme.com` (or a whole domain: `weeny allow myapp @acme.com`).
 `weeny allow myapp` shows who's in; `weeny revoke myapp amy@acme.com` undoes;
 `weeny allow myapp everyone` makes it public. The visitor's email reaches your app in

@@ -85,6 +85,18 @@ test('legacy --id requires an exact ID for server and widget commands', async ()
   assert.deepEqual(calls.at(-1), { path: '/api/machines/mine', method: 'DELETE' })
 })
 
+test('widget accepts a server name or ID and rejects competing selectors before fetching', async () => {
+  const { calls, commands, lines } = fixture()
+  for (const selector of [['--server', 'server'], ['--server', 'mine'], ['--id', 'mine']]) {
+    await commands.widget(['app', ...selector, '--json'])
+    assert.equal(calls.at(-1).path, '/api/apps/a/widget')
+    assert.equal(JSON.parse(lines.at(-1)).settings.position, 'left')
+  }
+  const count = calls.length
+  await assert.rejects(commands.widget(['app', '--server', 'server', '--id', 'mine']), /Pass either --server or --id/)
+  assert.equal(calls.length, count)
+})
+
 test('blank server selectors cannot turn an explicit action into a default selection', async()=>{
   const f=fixture()
   for (const option of ['--id','--server'])

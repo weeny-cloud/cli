@@ -150,8 +150,9 @@ globalThis.fetch = async (url, opts) => {
 childProcess.execFileSync = (program, args) => {
   if (program === 'git') throw new Error('no git metadata in this fixture')
   const deployment = process.env.WEENY_TEST_NETWORKING
+  const appUser = process.env.WEENY_TEST_APP_USER
   if (program === 'rsync') {
-    if (['unsupported', 'auto-unsupported'].includes(deployment)) process.exit(70)
+    if (['unsupported', 'auto-unsupported'].includes(deployment) || appUser === 'unsupported') process.exit(70)
     return ''
   }
   assert.equal(program, 'ssh')
@@ -159,11 +160,12 @@ childProcess.execFileSync = (program, args) => {
   assert.equal(process.argv[2], 'push')
   if (args.at(-1) === 'weeny _deploy-begin demo') return JSON.stringify({
     deploymentId:'fixture', incomingDir:'/tmp/incoming', capabilities:{
-      deploymentNetworking: ['supported','stale','auto','auto-unsupported'].includes(deployment), autoPort: deployment === 'auto',
+      deploymentNetworking: ['supported','stale','auto','auto-unsupported'].includes(deployment), autoPort: deployment === 'auto', appUser: appUser === 'supported',
     },
   })
   const networking = deployment ? " --port '" + (deployment === 'auto' ? 'auto' : '3000') + "' --origin-route 'store'" : ''
-  assert.equal(args.at(-1), "weeny _deploy-finalize demo --id fixture" + networking + " --tag '-h' -- 'npm' 'start'")
+  const userFlag = appUser ? " --user 'app.user'" : ""
+  assert.equal(args.at(-1), "weeny _deploy-finalize demo --id fixture" + networking + userFlag + " --tag '-h' -- 'npm' 'start'")
   if (deployment === 'stale') throw Object.assign(new Error('stale deployment base'), { status: 3 })
   console.log('deployment finalized')
 }
@@ -215,6 +217,13 @@ syncBuiltinESMExports()
     const unsupportedAuto = run(autoPush, false, { WEENY_TEST_NETWORKING: 'auto-unsupported' })
     assert.equal(unsupportedAuto.status, 1, unsupportedAuto.stderr)
     assert.match(unsupportedAuto.stderr, /updated Weeny CLI before --port auto can be used/)
+    const userPush = ['push', '.', 'demo', '--tag', '-h', '--user', 'app.user', '--', 'npm', 'start']
+    const userSupported = run(userPush, false, { WEENY_TEST_APP_USER: 'supported' })
+    assert.equal(userSupported.status, 0, userSupported.stderr)
+    assert.match(userSupported.stdout, /deployment finalized/)
+    const userUnsupported = run(userPush, false, { WEENY_TEST_APP_USER: 'unsupported' })
+    assert.equal(userUnsupported.status, 1, userUnsupported.stderr)
+    assert.match(userUnsupported.stderr, /updated Weeny CLI before --user can be used/)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 

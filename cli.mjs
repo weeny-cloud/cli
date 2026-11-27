@@ -38,7 +38,7 @@ const ALIASES = { status: 'server', whoami: 'help' }
 const VALUE_OPTIONS = {
   ...accountValueOptions,
   create: ['name', 'tier'],
-  push: ['build', 'health', 'stop', 'startup-timeout', 'tag', 'server', 'port', 'origin-route'],
+  push: ['build', 'health', 'stop', 'startup-timeout', 'tag', 'server', 'port', 'origin-route', 'user'],
   login: ['email', 'code', 'label'],
   onboarding: ['project', 'discovery', 'discovery-detail'],
   keys: ['revoke'],
@@ -423,9 +423,12 @@ const commands = {
 
   ${wayIn}
 
-To put an app on it:
-  1. build it locally, then deploy it:   npx weeny-cloud push ./myapp${target} -- <start command>
-  2. put it on the internet:             npx weeny-cloud ssh${target} "weeny expose myapp <port>"   → https://myapp-xxxx.onweeny.com
+To put a web app on it:
+  1. reserve its URL:    npx weeny-cloud route create myapp --private
+  2. deploy it:         npx weeny-cloud push ./myapp${target} --port <port> -- <start command>
+  3. send it traffic:   npx weeny-cloud route set-backends myapp --backend ${m.name}/myapp
+
+Pass the app's configured port, or use --port auto if it reads PORT.
 
 A push builds a new release, then stops, switches, starts and checks the app.
 A failed startup restores the previous release.
@@ -468,6 +471,8 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     }
     if (f.port === 'auto' && !begin.capabilities?.autoPort)
       die('this server needs an updated Weeny CLI before --port auto can be used')
+    if ('user' in f && !begin.capabilities?.appUser)
+      die('this server needs an updated Weeny CLI before --user can be used')
     if (('port' in f || 'origin-route' in f) && !begin.capabilities?.deploymentNetworking)
       die('this server needs an updated Weeny CLI before --port or --origin-route can be used')
     if (('stop' in f || 'startup-timeout' in f) && !begin.capabilities?.lifecycleCommands)
@@ -526,7 +531,7 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
     if ('health' in f) parts.push('--health', shq(f.health))
     if ('stop' in f) parts.push('--stop', shq(f.stop))
     if ('startup-timeout' in f) parts.push('--startup-timeout', shq(f['startup-timeout']))
-    for (const key of ['port', 'origin-route']) {
+    for (const key of ['port', 'origin-route', 'user']) {
       if (key in f) parts.push('--' + key, shq(f[key]))
     }
     if ('tag' in f) parts.push('--tag', shq(f.tag))
@@ -706,7 +711,7 @@ terms with bare npx weeny-cloud or at ${API}/dashboard/start.
 Bare create uses the first-server offers. A card-required trial needs review in
 the dashboard. List and pick servers with npx weeny-cloud server status.
 Use server status, resume, suspend, rebuild or delete; disruptive actions need --confirm.`,
-  push: `npx weeny-cloud push [folder] [app-name] [--server SERVER] [--build "<cmd>"] [--health "<cmd>"] [--stop "<cmd>"] [--startup-timeout <seconds>] [--port PORT|auto] [--origin-route ROUTE] [--tag "<text>"] [--all] [-- <start command>]
+  push: `npx weeny-cloud push [folder] [app-name] [--server SERVER] [--build "<cmd>"] [--health "<cmd>"] [--stop "<cmd>"] [--startup-timeout <seconds>] [--port PORT|auto] [--origin-route ROUTE] [--user NAME] [--tag "<text>"] [--all] [-- <start command>]
 
 Deploy a local folder to your server as a new release (name defaults to the folder's).
 First push needs the start command: end the line with \`-- <command>\`; a build step is
@@ -718,9 +723,14 @@ the folder otherwise).
 On a multi-server account, pass the destination name or ID with --server.
 Each push builds in a fresh release while the current app serves. It then stops the
 app, switches releases and starts the new process. A failed startup restores the
-previous release. Use separate ports and weeny-cloud expose for a live traffic handoff.
+previous release. Use route set-backends for a live traffic handoff.
 The upload skips .git and node_modules;
 respects .gitignore (--all to override). Rollback: weeny rollback <app> on the server.
+For an HTTPS backend, use --port NUMBER for the app's configured listener or
+--port auto if it reads PORT. Later pushes reuse the port. Attach with
+route set-backends after the app is healthy. Use --origin-route ROUTE if the
+app needs WEENY_PUBLIC_URL during build or startup.
+--user NAME runs the app and its lifecycle commands as an existing Linux user.
 --startup-timeout <seconds> sets the total server readiness deadline (default 30).
 --stop "<cmd>" adds synchronous cleanup for external workloads; keep it idempotent.
 Both settings are remembered per release. Use --stop none or --startup-timeout none
@@ -774,14 +784,16 @@ Object.assign(HELP, {
   route: `weeny-cloud route list [--json]
 weeny-cloud route create NAME [--private] [--health-path PATH] [--json]
 weeny-cloud route inspect ROUTE [--json]
-weeny-cloud route set-backends ROUTE --backend SERVER/APP [--backend SERVER/APP ...]
-weeny-cloud route clear ROUTE
+weeny-cloud route set-backends ROUTE --backend SERVER/APP [--backend SERVER/APP ...] [--health-path PATH] [--no-wait] [--json]
+weeny-cloud route clear ROUTE [--no-wait] [--json]
 weeny-cloud route access ROUTE --public | --private [--allow EMAIL] [--domain DOMAIN]
 weeny-cloud route status OPERATION_ID [--json]
 weeny-cloud route delete ROUTE
 
-Create reserves a URL without a backend. Pass --origin-route NAME on push to
-configure the app before its build. Set the full backend list to send traffic.
+Create reserves a URL. Deploy each named backend with --port NUMBER or
+--port auto, then supply the full backend list to send traffic. Use
+SERVER:PORT to target an existing listener directly. With --no-wait, use
+route status to follow the operation until removed backends are safe to restart.
 Use the HTTPS URL from route list as ROUTE. A bare name selects a reserved route.
 Access replaces the full list of allowed emails and domains. Repeat --allow and
 --domain for every entry you want to keep. The owner always retains access.
@@ -805,7 +817,7 @@ Suspend takes all apps offline. Rebuild restores the latest snapshot, potentiall
 losing newer changes. Delete destroys all data. These disruptive actions require
 specific human approval and --confirm. Commands return immediately; --wait polls
 for completion for up to ten minutes. Inspect status before retrying an action.`,
-  widget: `weeny-cloud widget APP [--id SERVER_ID] [--position bottom] [--branding on|off] [--json]
+  widget: `weeny-cloud widget APP [--server NAME_OR_ID] [--position bottom] [--branding on|off] [--json]
 
 Read or change appearance through the owner API, without waking the server.
 Positions: top-left, top, top-right, right, bottom-right, bottom, bottom-left, left.

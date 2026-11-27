@@ -1,7 +1,7 @@
 export const accountValueOptions = {
   expose: ['health-path', 'backend'],
   server: ['id', 'server', 'quote'],
-  widget: ['id', 'position', 'branding'],
+  widget: ['id', 'server', 'position', 'branding'],
   billing: ['id', 'reason'],
   tier: ['monthly-usd', 'quote', 'server'],
 }
@@ -212,7 +212,8 @@ export function accountCommands({ call, loadCreds, clearCredentials, ask, intera
     },
     async widget(argv) {
       const { args, options } = parse(argv, accountValueOptions.widget)
-      if (args.length !== 1) throw new Error('Usage: weeny-cloud widget APP [--position bottom] [--branding on|off] [--json]')
+      if (args.length !== 1) throw new Error('Usage: weeny-cloud widget APP [--server NAME_OR_ID] [--position bottom] [--branding on|off] [--json]')
+      if (options.server && options.id) throw new Error('Pass either --server or --id.')
       if (options.branding !== undefined && !['on','off'].includes(options.branding)) throw new Error('--branding must be on or off')
       const m = select(await machines(), options), app = m.apps?.find(a => a.name === args[0])
       if (!app) throw new Error('No such app on this server')

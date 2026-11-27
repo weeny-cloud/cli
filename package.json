@@ -1,6 +1,6 @@
 {
   "name": "weeny-cloud",
-  "version": "0.17.4",
+  "version": "0.17.5",
   "description": "weeny.cloud — a real Linux server for coding agents. Free forever, with HTTPS, private sharing and backups.",
   "homepage": "https://weeny.cloud",
   "repository": {

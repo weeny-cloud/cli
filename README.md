@@ -9,11 +9,13 @@ from Weeny.Cloud, so the wording stays current without updating this package.
 ```
 npx weeny-cloud login          # email + code, agent-driveable
 npx weeny-cloud create         # your server, ~2 min
-npx weeny-cloud push ./demo demo --build "npm ci" -- npm start
-                               # a push IS a deployment: fresh release, built +
-                               # health-checked on the server; re-push = new release
-npx weeny-cloud ssh "weeny expose demo 3000"   # → https://demo-xxxx.onweeny.com
+npx weeny-cloud route create demo --private
+npx weeny-cloud push ./demo demo --port 3000 --build "npm ci" -- npm start
+npx weeny-cloud route set-backends demo --backend YOUR_SERVER/demo
 ```
+
+The example assumes the app listens on port 3000. Use `--port auto` if it reads
+`PORT`. Get your server name with `npx weeny-cloud server status`.
 
 ## Two CLIs, one job each
 
@@ -40,7 +42,8 @@ deployed release with the app environment. Health checks retry until the startup
 deadline and must be safe to repeat. Stop commands must wait for cleanup and be
 idempotent; they run before the foreground process group is terminated. Ordinary
 apps need no stop override. Start commands must remain in the foreground.
-Settings are versioned with releases and reused on subsequent pushes; use
+Use `--user NAME` to run the app and its lifecycle commands as an existing Linux user.
+Settings are versioned with releases and reused on subsequent pushes. Use
 `--stop none` or `--startup-timeout none` to reset them. Publishing this laptop
 package and upgrading an existing server are separate release operations.
 
@@ -245,11 +248,11 @@ Command help is available offline as `help COMMAND` or `COMMAND --help`.
 
 `create --name web-b --tier teeny` returns a payment link and the price for the
 new server. On an account with multiple servers, pass `--server web-b` to
-`push`, `ssh`, or `tier`. Use `server status` to see names, IDs and placement.
+`push`, `ssh`, `widget`, or `tier`. Use `server status` to see names, IDs and placement.
 
-`expose HOST --backend web-a:3000 --backend web-b:3000 --health-path /readyz`
+`route set-backends shop --backend web-a/shop --backend web-b/shop`
 sets the complete backend list for an existing HTTPS URL. The CLI waits until
-removed backends drain. Use `--no-wait --json` and `expose status ID --json` to
+removed backends drain. Use `--no-wait --json` and `route status ID --json` to
 track the operation separately.
 
 See the [two-server rollout](https://weeny.cloud/recipes/two-server-rollout)
@@ -259,11 +262,12 @@ and [SQLite blue-green rollout](https://weeny.cloud/recipes/sqlite-blue-green).
 
 ```sh
 npx weeny-cloud route create shop --private --health-path /readyz
-npx weeny-cloud push ./shop shop --server web-a --port auto --origin-route shop -- npm start
+npx weeny-cloud push ./shop shop --server web-a --port auto -- npm start
 npx weeny-cloud route set-backends shop --backend web-a/shop
 ```
 
-The app listens on `PORT` and can use `WEENY_PUBLIC_URL` in its build and runtime.
+The app listens on `PORT`. Add `--origin-route shop` on push if the app needs
+`WEENY_PUBLIC_URL` during build or startup.
 Supply the full desired backend list when changing traffic. Inspect it with
 `route inspect shop`, or run `route clear shop` to drain while retaining the URL.
 Use the exact URL from `route list` to select a route unambiguously. A bare name

@@ -31,9 +31,10 @@ export function credentialsForOrigin(creds, environment) {
 
 // Explicit, noninteractive deployment credentials. Never persist the token or
 // enroll a new SSH device from a CI run; prepare/revoke that key separately.
-export function credentialsFromEnv(env, environment) {
+export function credentialsFromEnv(env, environment, { sshRequired = true } = {}) {
   if (!env.WEENY_TOKEN) return null
   if (!/^weeny_[A-Za-z0-9_-]{20,}$/.test(env.WEENY_TOKEN)) throw new Error('Invalid WEENY_TOKEN')
+  if (!sshRequired) return { token: env.WEENY_TOKEN, apiBase: environment.api }
   if (!env.WEENY_SSH_KEY_FILE || !env.WEENY_KNOWN_HOSTS_FILE)
     throw new Error('WEENY_TOKEN requires a pre-enrolled WEENY_SSH_KEY_FILE and pinned WEENY_KNOWN_HOSTS_FILE')
   return { token: env.WEENY_TOKEN, apiBase: environment.api, keyPath: resolve(env.WEENY_SSH_KEY_FILE),

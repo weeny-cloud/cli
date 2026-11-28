@@ -30,6 +30,8 @@ npx weeny-cloud site deploy docs --dir ./dist
 
 The returned HTTPS URL belongs to your workspace and serves while a server is
 asleep or absent. Run `npx weeny-cloud site --help` for rollback and removal.
+CI can use a `WEENY_TOKEN` for site commands. SSH credentials are needed
+for server deployments.
 
 ## Two CLIs, one job each
 

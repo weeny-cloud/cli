@@ -25,7 +25,8 @@ const SELF = fileURLToPath(import.meta.url)   // absolute path to this cli.mjs (
 const relayApi = process.argv[2] === '_relay' && process.argv[4]
 const ENV = cliEnvironment(relayApi ? { ...process.env, WEENY_API: relayApi,
   WEENY_CONFIG_DIR: process.argv[5], WEENY_ENV: relayApi === 'https://weeny.cloud' ? 'production' : 'staging' } : process.env)
-const CI_CREDS = credentialsFromEnv(process.env, ENV)
+const cmd = process.argv[2]
+const CI_CREDS = credentialsFromEnv(process.env, ENV, { sshRequired: cmd !== 'site' })
 const API = ENV.api
 const DIR = ENV.dir
 const SSH_DIR = ENV.sshDir
@@ -45,7 +46,6 @@ const VALUE_OPTIONS = {
   onboarding: ['project', 'discovery', 'discovery-detail'],
   keys: ['revoke'],
 }
-const cmd = process.argv[2]
 const command = Object.hasOwn(ALIASES, cmd) ? ALIASES[cmd] : cmd
 const argv = process.argv.slice(3)
 const delimiter = argv.indexOf('--')

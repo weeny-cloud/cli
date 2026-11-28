@@ -17,6 +17,20 @@ npx weeny-cloud route set-backends demo --backend YOUR_SERVER/demo
 The example assumes the app listens on port 3000. Use `--port auto` if it reads
 `PORT`. Get your server name with `npx weeny-cloud server status`.
 
+## Publish a static site
+
+Build your site with its usual tools, then publish the finished files. Plain HTML
+can be published directly. Use the same site name for later deploys.
+
+```sh
+npx weeny-cloud login
+npm run build
+npx weeny-cloud site deploy docs --dir ./dist
+```
+
+The returned HTTPS URL belongs to your workspace and serves while a server is
+asleep or absent. Run `npx weeny-cloud site --help` for rollback and removal.
+
 ## Two CLIs, one job each
 
 - `npx weeny-cloud …` — this package, on your **laptop**. It gets code and people

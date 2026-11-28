@@ -15,6 +15,7 @@ import { resourceNoticesAllowed, maybeShowResourceNotices } from './resource-not
 import { profileAccessError, profileDirectory, writeProfile, checkProfileWritable } from './profile.mjs'
 import { proxyCommand } from './ssh-command.mjs'
 import { proxyFetch, webSocketProxyAgent } from './proxy-network.mjs'
+import { siteFiles } from './site.mjs'
 import { accountCommands, accountValueOptions, parseOptions, selectMachine } from './account-commands.mjs'
 
 const SELF = fileURLToPath(import.meta.url)   // absolute path to this cli.mjs (for ProxyCommand)
@@ -38,6 +39,7 @@ const ALIASES = { status: 'server', whoami: 'help' }
 const VALUE_OPTIONS = {
   ...accountValueOptions,
   create: ['name', 'tier'],
+  site: ['dir'],
   push: ['build', 'health', 'stop', 'startup-timeout', 'tag', 'server', 'port', 'origin-route', 'user'],
   login: ['email', 'code', 'label'],
   onboarding: ['project', 'discovery', 'discovery-detail'],
@@ -304,6 +306,7 @@ function commandList() {
   npx weeny-cloud login            sign in — weeny emails you a code
   npx weeny-cloud onboarding      complete signup from the project context your agent already has
   npx weeny-cloud create          request a server using the current offers
+  npx weeny-cloud site             publish or roll back a static website
   npx weeny-cloud push [folder]    deploy this folder to your server (re-push = new release)
   npx weeny-cloud ssh [command]    go to the server — that's where the power is
   npx weeny-cloud apps             every app you can reach — yours + shared with you
@@ -440,6 +443,24 @@ Deploying with a coding agent? Run this first so it knows how:  npx weeny-cloud 
       }
       if (!jsonOutput) process.stdout.write('.')
     }
+  },
+
+  async site() {
+    const action = argv[0]
+    const { options, args } = parseOptions(argv.slice(1), ['dir'], ['confirm'])
+    const [name] = args
+    if (!['deploy', 'rollback', 'status', 'delete'].includes(action) || args.length !== 1 ||
+        !/^[a-z0-9][a-z0-9-]{0,39}$/.test(name) || (action === 'deploy') !== Boolean(options.dir) ||
+        (action === 'delete') !== Boolean(options.confirm)) die('See npx weeny-cloud site --help for site commands.')
+    const path = `/api/sites/${encodeURIComponent(name)}`
+    let result
+    if (action === 'deploy') result = await call(`${path}/deploy`, { method: 'POST', body: { files: siteFiles(options.dir) } })
+    else if (action === 'rollback') result = await call(`${path}/rollback`, { method: 'POST', body: {} })
+    else result = await call(path, { method: action === 'delete' ? 'DELETE' : 'GET' })
+    if (jsonOutput) console.log(JSON.stringify(result))
+    else if (result.deleted) console.log(`Removed ${name} from its HTTPS route`)
+    else if (result.publishing) console.log(`${result.url} · publishing. Check with: npx weeny-cloud site status ${name}`)
+    else console.log(result.url)
   },
 
   // Ship a local directory to the server as a new RELEASE: upload into a fresh staging
@@ -711,6 +732,15 @@ terms with bare npx weeny-cloud or at ${API}/dashboard/start.
 Bare create uses the first-server offers. A card-required trial needs review in
 the dashboard. List and pick servers with npx weeny-cloud server status.
 Use server status, resume, suspend, rebuild or delete; disruptive actions need --confirm.`,
+  site: `npx weeny-cloud site deploy NAME --dir DIRECTORY [--json]
+npx weeny-cloud site status NAME [--json]
+npx weeny-cloud site rollback NAME [--json]
+npx weeny-cloud site delete NAME --confirm [--json]
+
+Publish a directory of finished website files to an HTTPS URL on your account.
+Build first if your project needs a build, then pass the output directory.
+Repeat deploy with the same name to update the same URL. Rollback restores the
+other retained release. Delete removes the static releases and keeps the route.`,
   push: `npx weeny-cloud push [folder] [app-name] [--server SERVER] [--build "<cmd>"] [--health "<cmd>"] [--stop "<cmd>"] [--startup-timeout <seconds>] [--port PORT|auto] [--origin-route ROUTE] [--user NAME] [--tag "<text>"] [--all] [-- <start command>]
 
 Deploy a local folder to your server as a new release (name defaults to the folder's).
